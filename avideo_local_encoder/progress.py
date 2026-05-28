@@ -76,9 +76,11 @@ class ProgressReporter:
                 description="[green]Downloaded ",
             )
         elif status == "downloading":
-            if total and self._progress.tasks[self._task].total != total:
-                self._progress.update(self._task, total=total)
-            self._progress.update(self._task, completed=downloaded)
+            self._progress.update(
+                self._task,
+                total=total or None,
+                completed=downloaded,
+            )
 
     # Encode -------------------------------------------------------------
 
@@ -98,9 +100,7 @@ class ProgressReporter:
     def on_upload(self, status: str, uploaded: int, total: int) -> None:
         if self._task is None:
             return
-        if total and self._progress.tasks[self._task].total != total:
-            self._progress.update(self._task, total=total)
-        self._progress.update(self._task, completed=uploaded)
+        self._progress.update(self._task, total=total or None, completed=uploaded)
 
     # Messaging ----------------------------------------------------------
 
