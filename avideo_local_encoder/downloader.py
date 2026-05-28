@@ -8,9 +8,10 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Any, Callable, Optional
 
 import yt_dlp
+import yt_dlp.utils
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +47,7 @@ def download_video(
             total = int(d.get("total_bytes") or d.get("downloaded_bytes") or 0)
             progress_callback("finished", total, total)
 
-    base_opts: dict = {
+    base_opts: dict[str, Any] = {
         "outtmpl": output_template,
         "merge_output_format": "mp4",
         "no_playlist": True,
@@ -69,7 +70,7 @@ def download_video(
     if cookies_file and cookies_file.exists():
         base_opts["cookiefile"] = str(cookies_file)
 
-    strategies: list[dict] = [
+    strategies: list[dict[str, Any]] = [
         # 1. Best MP4 video + M4A audio (highest quality, most compatible)
         {
             "format": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/mp4",
@@ -97,10 +98,10 @@ def download_video(
 
     last_error: Optional[Exception] = None
     for i, strategy in enumerate(strategies, 1):
-        opts = {**base_opts, **strategy}
+        opts: dict[str, Any] = {**base_opts, **strategy}
         logger.info("yt-dlp strategy %d/%d: format=%s", i, len(strategies), opts.get("format"))
         try:
-            with yt_dlp.YoutubeDL(opts) as ydl:
+            with yt_dlp.YoutubeDL(opts) as ydl:  # type: ignore[arg-type]
                 info = ydl.extract_info(url, download=True)
                 if info is None:
                     raise yt_dlp.utils.DownloadError("extract_info returned None")
@@ -121,15 +122,15 @@ def download_video(
     raise last_error or RuntimeError("All yt-dlp download strategies failed")
 
 
-def get_video_info(url: str) -> dict:
+def get_video_info(url: str) -> dict[str, Any]:
     """Fetch metadata (title, duration, etc.) without downloading the file."""
-    ydl_opts = {
+    ydl_opts: dict[str, Any] = {
         "quiet": True,
         "no_color": True,
         "nocheckcertificate": True,
         "skip_download": True,
         "no_playlist": True,
     }
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:  # type: ignore[arg-type]
         info = ydl.extract_info(url, download=False)
-    return info or {}
+    return dict(info) if info else {}
