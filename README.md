@@ -74,24 +74,6 @@ Worker Pipeline
    └── AVideo API
 ```
 
----
-
-## Why I built this
-
-I built this project to demonstrate real-world backend engineering skills focused on:
-
-* async APIs
-* video processing
-* background jobs
-* streaming uploads
-* third-party integrations
-* concurrency
-* production-oriented architecture
-
-The project was inspired by real media platform workflows and encoding pipelines.
-
----
-
 ## Quick Start
 
 ```bash
