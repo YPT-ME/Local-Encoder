@@ -1,5 +1,5 @@
 ﻿<!DOCTYPE html>
-<html lang="en" class="dark">
+<html lang="en" class="dark h-full">
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -15,13 +15,13 @@
 <script src="/static/vendor/react-dom.development.js" crossorigin></script>
 <script src="/static/vendor/babel.min.js"></script>
 <style>
-  body { background: #0f1117; }
+  body { background: #0f1117; height: 100%; overflow: hidden; }
   .log-scroll::-webkit-scrollbar { width: 6px; }
   .log-scroll::-webkit-scrollbar-track { background: transparent; }
   .log-scroll::-webkit-scrollbar-thumb { background: #334; border-radius: 3px; }
 </style>
 </head>
-<body class="text-slate-200 min-h-screen">
+<body class="text-slate-200 h-full">
 <div id="root"></div>
 <script type="text/babel">
 const { useState, useRef, useCallback, useEffect } = React;
@@ -312,198 +312,242 @@ function App() {
   ];
 
   return (
-    <div className="mx-auto max-w-2xl px-4 py-10 space-y-5">
-      {/* Logo area — always reserves space (500×140 px aspect ratio) to prevent layout shift */}
-      <div className="flex justify-center py-2">
-        <div style={{ width: 250, height: 70 }} className="flex items-center justify-center">
+    <div className="flex flex-col h-screen overflow-hidden">
+
+      {/* ── Top bar ─────────────────────────────────────────────── */}
+      <header className="shrink-0 flex items-center gap-4 px-6 py-2.5 border-b border-slate-800 bg-slate-950/80 backdrop-blur">
+        {/* Logo slot */}
+        <div style={{ width: 140, height: 38 }} className="flex items-center shrink-0">
           {connStatus?.ok && connStatus.logoUrl
-            ? <img
-                src={connStatus.logoUrl}
-                alt="Site logo"
-                width={250} height={70}
-                className="object-contain"
-                style={{ filter: 'drop-shadow(0 0 4px rgba(0,0,0,0.85)) drop-shadow(0 0 2px rgba(255,255,255,0.7))' }}
-                onError={e => { e.currentTarget.style.visibility = 'hidden'; }}
-              />
-            : <div className="w-full h-full rounded-lg bg-slate-800/40" />
+            ? <img src={connStatus.logoUrl} alt="Site logo" height={38}
+                className="h-full w-auto object-contain"
+                style={{ filter: 'drop-shadow(0 0 3px rgba(0,0,0,0.9)) drop-shadow(0 0 1px rgba(255,255,255,0.6))' }}
+                onError={e => { e.currentTarget.style.visibility = 'hidden'; }} />
+            : <span className="text-base font-bold tracking-tight text-slate-100">Local <span className="text-brand">Encoder</span></span>
           }
         </div>
-      </div>
-      
-      <Card>
-        <h2 className="text-sm font-semibold text-slate-300 mb-4 flex items-center gap-2"><Ico name="server" className="text-brand" />AVideo Server</h2>
-        <div className="space-y-3">
-          <Input label="Server URL" type="url" value={serverUrl} onChange={setServerUrl} placeholder="https://your-avideo.example.com/" />
-          <div className="grid grid-cols-2 gap-3">
-            <Input label="Username" value={username} onChange={setUsername} placeholder="admin" />
-            <Input label="Password" type="password" value={password} onChange={setPassword} placeholder="••••••" />
-          </div>
-          <label className="flex items-center gap-2 text-xs text-slate-400 cursor-pointer select-none">
-            <input type="checkbox" checked={sslVerify} onChange={e => setSslVerify(e.target.checked)} className="accent-brand" />
-            Verify SSL certificate
-          </label>
-          <div className="flex items-center gap-3 pt-1">
-            <Btn onClick={testConnection} disabled={testing || !serverUrl || !username} size="sm">
-              <span className="inline-flex items-center gap-1.5"><Ico name="wifi" />{testing ? 'Testing…' : 'Test Connection'}</span>
-            </Btn>
-            {connStatus && <Badge ok={connStatus.ok} text={connStatus.text} />}
-          </div>
-        </div>
-      </Card>
+        <div className="flex-1" />
+        {connStatus && <Badge ok={connStatus.ok} text={connStatus.text} />}
+      </header>
 
-      <Card>
-        <h2 className="text-sm font-semibold text-slate-300 mb-4 flex items-center gap-2"><Ico name="film" className="text-brand" />Import Video</h2>
-        <div className="flex gap-1 mb-4 rounded-lg bg-slate-800/60 p-1 w-fit">
-          {TABS.map(t => (
-            <button key={t} onClick={() => setTab(t)}
-              className={cls('inline-flex items-center gap-1.5 rounded-md px-4 py-1.5 text-xs font-semibold transition',
-                tab === t ? 'bg-brand text-white shadow' : 'text-slate-400 hover:text-slate-200')}>
-              {t === 'URL' ? <Ico name="link" size={12} /> : <Ico name="upload" size={12} />}{t}
-            </button>
-          ))}
-        </div>
-        <div className="space-y-3">
-          {tab === 'URL' ? (
-            <Input label="Video URL" type="url" value={videoUrl} onChange={setVideoUrl} placeholder="https://www.youtube.com/watch?v=…" />
-          ) : (
-            <label className="block">
-              <span className="text-xs text-slate-400 mb-1 block">Local video file</span>
-              <div onClick={() => document.getElementById('file-input').click()}
-                className={cls('flex flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed cursor-pointer py-8 text-sm transition',
-                  localFile ? 'border-emerald-600 text-emerald-400 bg-emerald-950/20' : 'border-slate-700 text-slate-400 hover:border-brand bg-slate-900')}>
-                {localFile ? (
-                  <><Ico name="film" size={28} className="text-emerald-400" /><span className="font-medium">{localFile.name}</span><span className="text-xs text-slate-500">{(localFile.size/1048576).toFixed(1)} MiB</span></>
-                ) : (
-                  <><Ico name="folder" size={28} className="text-slate-500" /><span>Click to select a video file</span><span className="text-xs text-slate-500">MP4, MKV, MOV, AVI, WebM…</span></>
-                )}
-              </div>
-              <input id="file-input" type="file" accept="video/*,.mkv,.avi,.mov,.flv,.webm,.mp4" className="hidden"
-                onChange={e => { const f = e.target.files?.[0]; if (f) { setLocalFile(f); if (!vidTitle) setVidTitle(f.name.replace(/\.[^.]+$/,'')); } }} />
-            </label>
-          )}
-          <Input label="Title (optional)" value={vidTitle} onChange={setVidTitle} placeholder="Auto-detected from URL / filename" />
-          <label className="block">
-            <span className="text-xs text-slate-400 mb-1 block">Description (optional)</span>
-            <textarea value={vidDesc} onChange={e => setVidDesc(e.target.value)} placeholder="Optional description…" rows={2}
-              className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-brand focus:ring-1 focus:ring-brand transition resize-none" />
-          </label>
-          <div className="grid grid-cols-2 gap-3">
-            <Select label="Category" value={catId} onChange={setCatId}
-              options={catsLoaded ? catOptions : [{ value: '0', label: connOk ? 'Loading\u2026' : '\u2014 connect first \u2014' }]} />
-            <Select label="Format" value={format} onChange={setFormat}
-              options={[{ value:'auto',label:'Auto'},{ value:'mp4',label:'MP4'},{ value:'hls',label:'HLS'}]} />
-          </div>
-          <div>
-            <div className="flex items-baseline gap-2 mb-2">
-              <span className="text-xs text-slate-400">Resolutions</span>
-              {resolutions.length === 0
-                ? <span className="text-xs text-slate-500">— all available resolutions will be encoded</span>
-                : <span className="text-xs text-brand font-semibold">will encode: {resolutions.map(r => r >= 2160 ? '4K' : r+'p').join(', ')}</span>
-              }
-            </div>
-            <div className="flex flex-wrap gap-2">
-              {[240,360,480,540,720,1080,1440,2160].map(r => (
-                <label key={r} className={cls(
-                  'flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold cursor-pointer border transition select-none',
-                  resolutions.includes(r)
-                    ? 'bg-brand/20 border-brand text-brand'
-                    : 'bg-slate-800 border-slate-700 text-slate-400 hover:border-slate-500'
-                )}>
-                  <input type="checkbox" className="hidden" checked={resolutions.includes(r)} onChange={() => toggleResolution(r)} />
-                  {r >= 2160 ? '4K' : r+'p'}
-                </label>
-              ))}
-            </div>
-          </div>
-          {!connOk && <p className="inline-flex items-center gap-1.5 text-xs text-amber-400"><Ico name="alert" className="text-amber-400" size={13} />Test the server connection before importing.</p>}
-          <div className="pt-1">
-            <Btn variant="success" onClick={startImport} disabled={!canImport}>
-              <span className="inline-flex items-center gap-1.5"><Ico name="plus" />Add to Queue</span>
-            </Btn>
-          </div>
-        </div>
-      </Card>
+      {/* ── Two-column body ──────────────────────────────────────── */}
+      <div className="flex flex-1 gap-0 overflow-hidden">
 
-      {jobQueue.length > 0 && (
-        <Card>
-          <h2 className="text-sm font-semibold text-slate-300 mb-4 flex items-center gap-2"><Ico name="list" className="text-brand" />Queue <span className="text-slate-500 font-normal">({jobQueue.length})</span></h2>
-          <div className="space-y-4">
-            {jobQueue.map((job, idx) => {
-              const pct = job.pct || { download: 0, encode: 0, upload: 0 };
-              const statusIcon =
-                job.status === 'pending' ? <span className="text-slate-500 text-xs font-bold">#{idx+1}</span>
-                : job.status === 'running' ? <Ico name="loader" size={14} className="text-amber-400 animate-spin" />
-                : job.status === 'done'    ? <Ico name="check" size={14} className="text-emerald-400" />
-                : <Ico name="xcircle" size={14} className="text-red-400" />;
-              const statusColor = job.status === 'done' ? 'text-emerald-400'
-                : job.status === 'error' ? 'text-red-400'
-                : job.status === 'running' ? 'text-amber-400'
-                : 'text-slate-500';
-              return (
-                <div key={job.job_id} className="rounded-lg border border-slate-700 bg-slate-800/40 p-3 space-y-2">
-                  {/* Header row */}
-                  <div className="flex items-start gap-2">
-                    <span className="mt-0.5 shrink-0 w-5 flex justify-center">{statusIcon}</span>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-slate-100 truncate">{job.title || job.job_id}</p>
-                      <span className={cls('text-xs capitalize', statusColor)}>{job.status}</span>
-                    </div>
-                    {job.thumbnail && (
-                      <img src={job.thumbnail} alt="" className="w-14 h-10 rounded object-cover shrink-0 bg-slate-700" />
-                    )}
-                  </div>
+        {/* LEFT: settings + import form */}
+        <aside className="w-[400px] shrink-0 flex flex-col border-r border-slate-800 overflow-y-auto log-scroll bg-slate-950/40">
+          <div className="p-4 space-y-4">
 
-                  {job.videoInfo && (job.status === 'running' || job.status === 'done') && (
-                    <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-slate-400 pl-7">
-                      {job.videoInfo.uploader && <span className="inline-flex items-center gap-1"><Ico name="tv" size={11} />{job.videoInfo.uploader}</span>}
-                      {job.videoInfo.duration_s > 0 && (
-                        <span className="inline-flex items-center gap-1"><Ico name="timer" size={11} />{Math.floor(job.videoInfo.duration_s/3600) > 0 ? `${Math.floor(job.videoInfo.duration_s/3600)}h ` : ''}{Math.floor((job.videoInfo.duration_s%3600)/60)}m {job.videoInfo.duration_s%60}s</span>
-                      )}
-                      {job.videoInfo.file_size_bytes > 0 && (
-                        <span className="inline-flex items-center gap-1"><Ico name="hdd" size={11} />{job.videoInfo.file_size_bytes >= 1_073_741_824
-                          ? (job.videoInfo.file_size_bytes/1_073_741_824).toFixed(2)+' GiB'
-                          : (job.videoInfo.file_size_bytes/1_048_576).toFixed(1)+' MiB'}</span>
-                      )}
-                    </div>
-                  )}
-
-                  {/* Progress bars (running only) */}
-                  {job.status === 'running' && (
-                    <div className="space-y-1.5 pl-8">
-                      <StepRow label="Download" pct={pct.download} color="bg-brand" />
-                      <StepRow label="Encode"   pct={pct.encode}   color="bg-amber-500" />
-                      <StepRow label="Upload"   pct={pct.upload}   color="bg-emerald-500" />
-                    </div>
-                  )}
-
-                  {/* Log (running) */}
-                  {job.status === 'running' && job.logs && job.logs.length > 0 && (
-                    <LogScroll logs={job.logs} />
-                  )}
-
-                  {/* Done banner */}
-                  {job.status === 'done' && job.doneInfo && (
-                    <div className="pl-7 text-xs text-emerald-400 inline-flex items-center gap-1.5">
-                      <Ico name="check" size={12} />videos_id: <strong>{job.doneInfo.videos_id}</strong>{' '}
-                      <a href={job.doneInfo.url} target="_blank" rel="noreferrer"
-                         className="inline-flex items-center gap-1 underline hover:text-emerald-300">
-                        View <Ico name="extlink" size={11} />
-                      </a>
-                    </div>
-                  )}
-
-                  {/* Error banner */}
-                  {job.status === 'error' && job.jobError && (
-                    <div className="pl-7 text-xs text-red-400 inline-flex items-center gap-1.5">
-                      <Ico name="xcircle" size={12} />{job.jobError}
-                    </div>
-                  )}
+            {/* Server card */}
+            <Card className="!p-4">
+              <h2 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3 flex items-center gap-2">
+                <Ico name="server" className="text-brand" size={13} />AVideo Server
+              </h2>
+              <div className="space-y-2.5">
+                <Input label="Server URL" type="url" value={serverUrl} onChange={setServerUrl} placeholder="https://your-avideo.example.com/" />
+                <div className="grid grid-cols-2 gap-2">
+                  <Input label="Username" value={username} onChange={setUsername} placeholder="admin" />
+                  <Input label="Password" type="password" value={password} onChange={setPassword} placeholder="••••••" />
                 </div>
-              );
-            })}
+                <div className="flex items-center justify-between pt-0.5">
+                  <label className="flex items-center gap-2 text-xs text-slate-400 cursor-pointer select-none">
+                    <input type="checkbox" checked={sslVerify} onChange={e => setSslVerify(e.target.checked)} className="accent-brand" />
+                    Verify SSL
+                  </label>
+                  <Btn onClick={testConnection} disabled={testing || !serverUrl || !username} size="sm">
+                    <span className="inline-flex items-center gap-1.5"><Ico name="wifi" size={12} />{testing ? 'Testing…' : 'Test'}</span>
+                  </Btn>
+                </div>
+              </div>
+            </Card>
+
+            {/* Import card */}
+            <Card className="!p-4">
+              <h2 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3 flex items-center gap-2">
+                <Ico name="film" className="text-brand" size={13} />Import Video
+              </h2>
+
+              {/* Tabs */}
+              <div className="flex gap-1 mb-3 rounded-lg bg-slate-800/60 p-1 w-fit">
+                {TABS.map(t => (
+                  <button key={t} onClick={() => setTab(t)}
+                    className={cls('inline-flex items-center gap-1.5 rounded-md px-4 py-1.5 text-xs font-semibold transition',
+                      tab === t ? 'bg-brand text-white shadow' : 'text-slate-400 hover:text-slate-200')}>
+                    {t === 'URL' ? <Ico name="link" size={11} /> : <Ico name="upload" size={11} />}{t}
+                  </button>
+                ))}
+              </div>
+
+              <div className="space-y-2.5">
+                {tab === 'URL' ? (
+                  <Input label="Video URL" type="url" value={videoUrl} onChange={setVideoUrl} placeholder="https://www.youtube.com/watch?v=…" />
+                ) : (
+                  <label className="block">
+                    <span className="text-xs text-slate-400 mb-1 block">Local video file</span>
+                    <div onClick={() => document.getElementById('file-input').click()}
+                      className={cls('flex items-center justify-center gap-3 rounded-lg border-2 border-dashed cursor-pointer py-5 text-sm transition',
+                        localFile ? 'border-emerald-600 text-emerald-400 bg-emerald-950/20' : 'border-slate-700 text-slate-400 hover:border-brand bg-slate-900')}>
+                      {localFile ? (
+                        <><Ico name="film" size={20} className="text-emerald-400 shrink-0" /><div className="min-w-0"><p className="font-medium truncate">{localFile.name}</p><p className="text-xs text-slate-500">{(localFile.size/1048576).toFixed(1)} MiB</p></div></>
+                      ) : (
+                        <><Ico name="folder" size={20} className="text-slate-500 shrink-0" /><span>Click to select a video file</span></>
+                      )}
+                    </div>
+                    <input id="file-input" type="file" accept="video/*,.mkv,.avi,.mov,.flv,.webm,.mp4" className="hidden"
+                      onChange={e => { const f = e.target.files?.[0]; if (f) { setLocalFile(f); if (!vidTitle) setVidTitle(f.name.replace(/\.[^.]+$/,'')); } }} />
+                  </label>
+                )}
+
+                <Input label="Title (optional)" value={vidTitle} onChange={setVidTitle} placeholder="Auto-detected" />
+
+                <div className="grid grid-cols-2 gap-2">
+                  <Select label="Category" value={catId} onChange={setCatId}
+                    options={catsLoaded ? catOptions : [{ value: '0', label: connOk ? 'Loading…' : '— connect first —' }]} />
+                  <Select label="Format" value={format} onChange={setFormat}
+                    options={[{ value:'auto',label:'Auto'},{ value:'mp4',label:'MP4'},{ value:'hls',label:'HLS'}]} />
+                </div>
+
+                <label className="block">
+                  <span className="text-xs text-slate-400 mb-1 block">Description (optional)</span>
+                  <textarea value={vidDesc} onChange={e => setVidDesc(e.target.value)} placeholder="Optional description…" rows={2}
+                    className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-brand focus:ring-1 focus:ring-brand transition resize-none" />
+                </label>
+
+                {/* Resolutions */}
+                <div>
+                  <div className="flex items-baseline gap-2 mb-1.5">
+                    <span className="text-xs text-slate-400">Resolutions</span>
+                    {resolutions.length === 0
+                      ? <span className="text-xs text-slate-500">all</span>
+                      : <span className="text-xs text-brand font-semibold">{resolutions.map(r => r >= 2160 ? '4K' : r+'p').join(', ')}</span>
+                    }
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {[240,360,480,540,720,1080,1440,2160].map(r => (
+                      <label key={r} className={cls(
+                        'flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-semibold cursor-pointer border transition select-none',
+                        resolutions.includes(r)
+                          ? 'bg-brand/20 border-brand text-brand'
+                          : 'bg-slate-800 border-slate-700 text-slate-400 hover:border-slate-500'
+                      )}>
+                        <input type="checkbox" className="hidden" checked={resolutions.includes(r)} onChange={() => toggleResolution(r)} />
+                        {r >= 2160 ? '4K' : r+'p'}
+                      </label>
+                    ))}
+                  </div>
+                </div>
+
+                {!connOk && (
+                  <p className="inline-flex items-center gap-1.5 text-xs text-amber-400">
+                    <Ico name="alert" className="text-amber-400" size={12} />Test connection before importing.
+                  </p>
+                )}
+
+                <Btn variant="success" onClick={startImport} disabled={!canImport}>
+                  <span className="inline-flex items-center gap-1.5"><Ico name="plus" />Add to Queue</span>
+                </Btn>
+              </div>
+            </Card>
+
           </div>
-        </Card>
-      )}
+        </aside>
+
+        {/* RIGHT: job queue */}
+        <main className="flex-1 flex flex-col overflow-hidden">
+          <div className="shrink-0 px-6 pt-5 pb-3 flex items-center gap-2 border-b border-slate-800">
+            <Ico name="list" className="text-brand" size={14} />
+            <h2 className="text-sm font-semibold text-slate-300">Queue</h2>
+            {jobQueue.length > 0 && (
+              <span className="ml-1 rounded-full bg-slate-800 border border-slate-700 px-2 py-0.5 text-xs text-slate-400">{jobQueue.length}</span>
+            )}
+          </div>
+
+          <div className="flex-1 overflow-y-auto log-scroll px-6 py-4">
+            {jobQueue.length === 0 ? (
+              <div className="flex flex-col items-center justify-center h-full gap-3 text-slate-600 select-none">
+                <Ico name="film" size={40} className="opacity-30" />
+                <p className="text-sm">No jobs yet — add a URL or file on the left.</p>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {jobQueue.map((job, idx) => {
+                  const pct = job.pct || { download: 0, encode: 0, upload: 0 };
+                  const statusIcon =
+                    job.status === 'pending' ? <span className="text-slate-500 text-xs font-bold">#{idx+1}</span>
+                    : job.status === 'running' ? <Ico name="loader" size={14} className="text-amber-400 animate-spin" />
+                    : job.status === 'done'    ? <Ico name="check" size={14} className="text-emerald-400" />
+                    : <Ico name="xcircle" size={14} className="text-red-400" />;
+                  const statusColor = job.status === 'done' ? 'text-emerald-400'
+                    : job.status === 'error' ? 'text-red-400'
+                    : job.status === 'running' ? 'text-amber-400'
+                    : 'text-slate-500';
+                  return (
+                    <div key={job.job_id} className="rounded-lg border border-slate-700 bg-slate-800/40 p-3 space-y-2">
+                      {/* Header row */}
+                      <div className="flex items-start gap-2">
+                        <span className="mt-0.5 shrink-0 w-5 flex justify-center">{statusIcon}</span>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium text-slate-100 truncate">{job.title || job.job_id}</p>
+                          <span className={cls('text-xs capitalize', statusColor)}>{job.status}</span>
+                        </div>
+                        {job.thumbnail && (
+                          <img src={job.thumbnail} alt="" className="w-16 h-11 rounded object-cover shrink-0 bg-slate-700" />
+                        )}
+                      </div>
+
+                      {job.videoInfo && (job.status === 'running' || job.status === 'done') && (
+                        <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-slate-400 pl-7">
+                          {job.videoInfo.uploader && <span className="inline-flex items-center gap-1"><Ico name="tv" size={11} />{job.videoInfo.uploader}</span>}
+                          {job.videoInfo.duration_s > 0 && (
+                            <span className="inline-flex items-center gap-1"><Ico name="timer" size={11} />{Math.floor(job.videoInfo.duration_s/3600) > 0 ? `${Math.floor(job.videoInfo.duration_s/3600)}h ` : ''}{Math.floor((job.videoInfo.duration_s%3600)/60)}m {job.videoInfo.duration_s%60}s</span>
+                          )}
+                          {job.videoInfo.file_size_bytes > 0 && (
+                            <span className="inline-flex items-center gap-1"><Ico name="hdd" size={11} />{job.videoInfo.file_size_bytes >= 1_073_741_824
+                              ? (job.videoInfo.file_size_bytes/1_073_741_824).toFixed(2)+' GiB'
+                              : (job.videoInfo.file_size_bytes/1_048_576).toFixed(1)+' MiB'}</span>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Progress bars (running only) */}
+                      {job.status === 'running' && (
+                        <div className="space-y-1.5 pl-7">
+                          <StepRow label="Download" pct={pct.download} color="bg-brand" />
+                          <StepRow label="Encode"   pct={pct.encode}   color="bg-amber-500" />
+                          <StepRow label="Upload"   pct={pct.upload}   color="bg-emerald-500" />
+                        </div>
+                      )}
+
+                      {/* Log (running) */}
+                      {job.status === 'running' && job.logs && job.logs.length > 0 && (
+                        <LogScroll logs={job.logs} />
+                      )}
+
+                      {/* Done banner */}
+                      {job.status === 'done' && job.doneInfo && (
+                        <div className="pl-7 text-xs text-emerald-400 inline-flex items-center gap-1.5">
+                          <Ico name="check" size={12} />videos_id: <strong>{job.doneInfo.videos_id}</strong>{' '}
+                          <a href={job.doneInfo.url} target="_blank" rel="noreferrer"
+                             className="inline-flex items-center gap-1 underline hover:text-emerald-300">
+                            View <Ico name="extlink" size={11} />
+                          </a>
+                        </div>
+                      )}
+
+                      {/* Error banner */}
+                      {job.status === 'error' && job.jobError && (
+                        <div className="pl-7 text-xs text-red-400 inline-flex items-center gap-1.5">
+                          <Ico name="xcircle" size={12} />{job.jobError}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </main>
+
+      </div>
     </div>
   );
 }
