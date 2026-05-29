@@ -250,7 +250,7 @@ def test_progress_stream_sends_connected_and_done(monkeypatch: pytest.MonkeyPatc
     import queue as q
 
     msg_queue: q.Queue[str | None] = q.Queue()
-    msg_queue.put(f'event: done\ndata: {json.dumps({"videos_id": 42})}\n\n')
+    msg_queue.put(f"event: done\ndata: {json.dumps({'videos_id': 42})}\n\n")
     msg_queue.put(None)  # signal end
 
     fake_jobs: dict[str, Any] = {

@@ -15,7 +15,9 @@ from local_encoder.downloader import download_video, get_video_info
 # ---------------------------------------------------------------------------
 
 
-def _make_ydl_mock(info: dict[str, Any] | None = None, side_effect: Exception | None = None) -> MagicMock:
+def _make_ydl_mock(
+    info: dict[str, Any] | None = None, side_effect: Exception | None = None
+) -> MagicMock:
     """Return a mock YoutubeDL context manager."""
     ydl = MagicMock()
     ydl.__enter__ = MagicMock(return_value=ydl)
@@ -92,13 +94,15 @@ def test_progress_hook_fragment_based(tmp_path: Path) -> None:
         download_video("https://example.com/v", tmp_path, "video", progress_callback=on_progress)
 
     hook = hook_ref[0]
-    hook({
-        "status": "downloading",
-        "fragment_index": 25,
-        "fragment_count": 100,
-        "downloaded_bytes": 100,
-        "total_bytes_estimate": 200,  # should be ignored
-    })
+    hook(
+        {
+            "status": "downloading",
+            "fragment_index": 25,
+            "fragment_count": 100,
+            "downloaded_bytes": 100,
+            "total_bytes_estimate": 200,  # should be ignored
+        }
+    )
     assert ("downloading", 25, 100) in calls
 
 
@@ -136,9 +140,7 @@ def test_download_video_falls_back_to_candidate(tmp_path: Path) -> None:
 def test_download_video_raises_when_all_strategies_fail(tmp_path: Path) -> None:
     import yt_dlp.utils
 
-    failing_ydl = _make_ydl_mock(
-        side_effect=yt_dlp.utils.DownloadError("unavailable")
-    )
+    failing_ydl = _make_ydl_mock(side_effect=yt_dlp.utils.DownloadError("unavailable"))
 
     with patch("local_encoder.downloader.yt_dlp.YoutubeDL", return_value=failing_ydl):
         with pytest.raises(yt_dlp.utils.DownloadError):

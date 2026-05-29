@@ -362,9 +362,7 @@ def test_upload_images_posts_files(tmp_path: Path) -> None:
     c._encrypted_pass = "enc"
 
     with patch.object(c._http, "post", return_value=_mock_response({"ok": True})) as mock_post:
-        result = c.upload_images(
-            videos_id=1, video_id_hash="h", duration=10.0, jpg_path=jpg
-        )
+        result = c.upload_images(videos_id=1, video_id_hash="h", duration=10.0, jpg_path=jpg)
 
     assert result == {"ok": True}
     mock_post.assert_called_once()
