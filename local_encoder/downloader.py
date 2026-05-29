@@ -53,7 +53,7 @@ def download_video(
         "merge_output_format": "mp4",
         "no_playlist": True,
         "nocheckcertificate": True,
-        "noprogress": True,          # we manage progress via hooks
+        "noprogress": True,  # we manage progress via hooks
         "progress_hooks": [_progress_hook],
         "quiet": True,
         "no_color": True,

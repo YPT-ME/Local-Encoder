@@ -4,6 +4,7 @@ Start with:
     avideo-local-encoder serve            # default: http://localhost:8000
     avideo-local-encoder serve --port 9000
 """
+
 from __future__ import annotations
 
 import json
@@ -40,9 +41,9 @@ app = FastAPI(title="AVideo Local Encoder", version="0.1.0")
 # ---------------------------------------------------------------------------
 # In-memory job store + global sequential queue
 # ---------------------------------------------------------------------------
-_jobs: dict[str, dict[str, Any]] = {}          # job_id → job state
-_job_order: list[str] = []                      # insertion order for the queue UI
-_work_queue: queue.Queue[str] = queue.Queue()   # job_ids pending execution
+_jobs: dict[str, dict[str, Any]] = {}  # job_id → job state
+_job_order: list[str] = []  # insertion order for the queue UI
+_work_queue: queue.Queue[str] = queue.Queue()  # job_ids pending execution
 
 
 def _worker() -> None:
@@ -88,14 +89,17 @@ def list_jobs() -> list[dict[str, Any]]:
         j = _jobs.get(jid)
         if j is None:
             continue
-        result.append({
-            "job_id": jid,
-            "status": j["status"],
-            "title": j.get("title", ""),
-            "thumbnail": j.get("thumbnail", ""),
-            "pct": j.get("pct", {"download": 0, "encode": 0, "upload": 0}),
-        })
+        result.append(
+            {
+                "job_id": jid,
+                "status": j["status"],
+                "title": j.get("title", ""),
+                "thumbnail": j.get("thumbnail", ""),
+                "pct": j.get("pct", {"download": 0, "encode": 0, "upload": 0}),
+            }
+        )
     return result
+
 
 STATIC_DIR = Path(__file__).parent / "static"
 if STATIC_DIR.exists():
@@ -106,6 +110,7 @@ if STATIC_DIR.exists():
 # Pydantic models
 # ---------------------------------------------------------------------------
 
+
 class ImportRequest(BaseModel):
     url: str
     server_url: str
@@ -114,8 +119,8 @@ class ImportRequest(BaseModel):
     categories_id: int = 0
     title: str = ""
     description: str = ""
-    format: str = "auto"           # "auto" | "mp4" | "hls"
-    resolutions: list[int] = []     # empty = all allowed
+    format: str = "auto"  # "auto" | "mp4" | "hls"
+    resolutions: list[int] = []  # empty = all allowed
     ssl_verify: bool = True
 
 
@@ -129,6 +134,7 @@ class TestConnectionRequest(BaseModel):
 # ---------------------------------------------------------------------------
 # Routes – connection test & categories
 # ---------------------------------------------------------------------------
+
 
 @app.post("/api/test-connection")
 def test_connection(req: TestConnectionRequest) -> dict[str, Any]:
@@ -170,6 +176,7 @@ def list_categories(
 # Shared encode+upload pipeline (used by both URL and file-upload jobs)
 # ---------------------------------------------------------------------------
 
+
 def _run_pipeline(
     emit,
     raw_file: Path,
@@ -194,8 +201,13 @@ def _run_pipeline(
     emit("log", {"msg": "Fetching server config…"})
     with AVideoClient(server_url, ssl_verify=ssl_verify) as _c:
         server_cfg = _c.get_server_config()
-    emit("log", {"msg": f"Server: auto_mp3={server_cfg.auto_convert_to_mp3}, "
-                         f"disable_hls={server_cfg.disable_hls}"})
+    emit(
+        "log",
+        {
+            "msg": f"Server: auto_mp3={server_cfg.auto_convert_to_mp3}, "
+            f"disable_hls={server_cfg.disable_hls}"
+        },
+    )
 
     # Resolve format
     if fmt == "auto":
@@ -206,11 +218,15 @@ def _run_pipeline(
     res_cap: int | None = None
     if resolutions:
         # Use explicitly chosen list, filtered to what we support
-        target_resolutions = sorted(r for r in resolutions if r in ALLOWED_RESOLUTIONS) or [ALLOWED_RESOLUTIONS[0]]
+        target_resolutions = sorted(r for r in resolutions if r in ALLOWED_RESOLUTIONS) or [
+            ALLOWED_RESOLUTIONS[0]
+        ]
         res_cap = max(target_resolutions)
     elif server_cfg.single_resolution > 0:
         res_cap = server_cfg.single_resolution
-        target_resolutions = [r for r in ALLOWED_RESOLUTIONS if r <= res_cap] or [ALLOWED_RESOLUTIONS[0]]
+        target_resolutions = [r for r in ALLOWED_RESOLUTIONS if r <= res_cap] or [
+            ALLOWED_RESOLUTIONS[0]
+        ]
     else:
         target_resolutions = list(ALLOWED_RESOLUTIONS)
         res_cap = max(ALLOWED_RESOLUTIONS)
@@ -307,8 +323,10 @@ def _run_pipeline(
                 base_pct = _idx * 100 // total_files
                 file_pct = int(sent * 100 / total) if total else 0
                 overall = base_pct + file_pct // total_files
-                emit("progress", {"step": "upload", "pct": overall,
-                                  "msg": f"Uploading {fname} {file_pct}%"})
+                emit(
+                    "progress",
+                    {"step": "upload", "pct": overall, "msg": f"Uploading {fname} {file_pct}%"},
+                )
 
             client.upload_file(
                 file_path=enc_file,
@@ -366,6 +384,7 @@ def _run_pipeline(
 # Import job – URL
 # ---------------------------------------------------------------------------
 
+
 @app.post("/api/import")
 def start_import(req: ImportRequest) -> dict[str, str]:
     job_id = str(uuid.uuid4())
@@ -413,12 +432,15 @@ def start_import(req: ImportRequest) -> dict[str, str]:
             filename_stem = sanitize_filename(video_title)[:80]
             emit("log", {"msg": f"Title: {video_title}"})
             uploader = info.get("uploader") or info.get("channel") or ""
-            emit("info", {
-                "title": video_title,
-                "uploader": uploader,
-                "duration_s": int(meta_duration),
-                "thumbnail": info.get("thumbnail") or "",
-            })
+            emit(
+                "info",
+                {
+                    "title": video_title,
+                    "uploader": uploader,
+                    "duration_s": int(meta_duration),
+                    "thumbnail": info.get("thumbnail") or "",
+                },
+            )
 
             # Step 2 – Download
             emit("progress", {"step": "download", "pct": 0, "msg": "Downloading…"})
@@ -439,13 +461,16 @@ def start_import(req: ImportRequest) -> dict[str, str]:
             emit("progress", {"step": "download", "pct": 100, "msg": "Download complete"})
 
             duration = probe_duration(raw_file, cfg.ffprobe_bin) or meta_duration
-            emit("info", {
-                "title": video_title,
-                "uploader": uploader,
-                "duration_s": int(duration),
-                "file_size_bytes": file_size_bytes,
-                "thumbnail": info.get("thumbnail") or "",
-            })
+            emit(
+                "info",
+                {
+                    "title": video_title,
+                    "uploader": uploader,
+                    "duration_s": int(duration),
+                    "file_size_bytes": file_size_bytes,
+                    "thumbnail": info.get("thumbnail") or "",
+                },
+            )
 
             _run_pipeline(
                 emit=emit,
@@ -486,6 +511,7 @@ def start_import(req: ImportRequest) -> dict[str, str]:
 # Import job – local file upload
 # ---------------------------------------------------------------------------
 
+
 @app.post("/api/import-file")
 async def start_import_file(
     file: UploadFile,
@@ -496,7 +522,7 @@ async def start_import_file(
     title: str = Form(""),
     description: str = Form(""),
     format: str = Form("auto"),
-    resolution: str = Form(""),   # comma-separated ints e.g. "360,720"
+    resolution: str = Form(""),  # comma-separated ints e.g. "360,720"
     ssl_verify: bool = Form(True),
 ) -> dict[str, str]:
     """Upload a local video file for encoding and publishing."""
@@ -535,20 +561,26 @@ async def start_import_file(
             raw_file.write_bytes(raw_bytes)
             files_to_clean.append(raw_file)
             file_size_bytes = len(raw_bytes)
-            emit("progress", {"step": "download", "pct": 100, "msg": f"File received: {original_filename}"})
+            emit(
+                "progress",
+                {"step": "download", "pct": 100, "msg": f"File received: {original_filename}"},
+            )
             emit("log", {"msg": f"File: {original_filename} ({file_size_bytes // 1_048_576} MiB)"})
 
             video_title = sanitize_filename(title or Path(original_filename).stem)[:80]
             video_description = description
             duration = probe_duration(raw_file, cfg.ffprobe_bin) or 0.0
             emit("log", {"msg": f"Title: {video_title}, duration: {duration:.1f}s"})
-            emit("info", {
-                "title": video_title,
-                "uploader": "",
-                "duration_s": int(duration),
-                "file_size_bytes": file_size_bytes,
-                "thumbnail": "",
-            })
+            emit(
+                "info",
+                {
+                    "title": video_title,
+                    "uploader": "",
+                    "duration_s": int(duration),
+                    "file_size_bytes": file_size_bytes,
+                    "thumbnail": "",
+                },
+            )
 
             _run_pipeline(
                 emit=emit,
@@ -564,7 +596,9 @@ async def start_import_file(
                 video_description=video_description,
                 duration=duration,
                 fmt=format.lower(),
-                resolutions=[int(r) for r in resolution.split(',') if r.strip().isdigit()] if resolution else [],
+                resolutions=[int(r) for r in resolution.split(",") if r.strip().isdigit()]
+                if resolution
+                else [],
                 cfg=cfg,
             )
             job["status"] = "done"
@@ -618,6 +652,7 @@ def job_progress(job_id: str) -> StreamingResponse:
 # ---------------------------------------------------------------------------
 # Serve the frontend
 # ---------------------------------------------------------------------------
+
 
 @app.get("/", response_class=HTMLResponse)
 def index() -> HTMLResponse:

@@ -284,7 +284,9 @@ def import_video(
             encoded_duration = duration
 
             if fmt == "mp4":
-                res_label = f"up to {res_cap}p" if res_cap < max(ALLOWED_RESOLUTIONS) else "all resolutions"
+                res_label = (
+                    f"up to {res_cap}p" if res_cap < max(ALLOWED_RESOLUTIONS) else "all resolutions"
+                )
                 rpt.begin_encode(f"Encoding MP4 ({res_label})", int(duration) or 100)
                 mp4_files = encode_mp4_multi(
                     input_path=raw_file,
@@ -299,10 +301,17 @@ def import_video(
                 rpt.success(f"Encoded {len(mp4_files)} MP4 file(s)")
                 if mp4_files:
                     encoded_duration = probe_duration(mp4_files[-1], cfg.ffprobe_bin) or duration
-                upload_resolution = max(int(f.stem.rsplit("_", 1)[-1].rstrip("p")) for f in mp4_files) if mp4_files else res_cap
+                upload_resolution = (
+                    max(int(f.stem.rsplit("_", 1)[-1].rstrip("p")) for f in mp4_files)
+                    if mp4_files
+                    else res_cap
+                )
 
             else:  # hls
-                rpt.begin_encode(f"Encoding HLS (up to {res_cap}p)", int(duration * len(target_resolutions)) or 100)
+                rpt.begin_encode(
+                    f"Encoding HLS (up to {res_cap}p)",
+                    int(duration * len(target_resolutions)) or 100,
+                )
                 hls_zip = encode_hls(
                     input_path=raw_file,
                     output_dir=work_dir,
@@ -327,7 +336,10 @@ def import_video(
 
             for fn, label in [
                 (lambda: extract_thumbnail_jpg(raw_file, jpg_file, seek, cfg.ffmpeg_bin), "JPG"),
-                (lambda: extract_thumbnail_gif(raw_file, gif_file, seek, 3.0, cfg.ffmpeg_bin), "GIF"),
+                (
+                    lambda: extract_thumbnail_gif(raw_file, gif_file, seek, 3.0, cfg.ffmpeg_bin),
+                    "GIF",
+                ),
                 (
                     lambda: extract_thumbnail_webp(raw_file, webp_file, seek, 3.0, cfg.ffmpeg_bin),
                     "WebP",
@@ -343,7 +355,6 @@ def import_video(
             # Step 5 – Upload to AVideo
             # ----------------------------------------------------------
             with AVideoClient(cfg.server_url, ssl_verify=cfg.ssl_verify) as client:
-
                 # 5a. Login
                 rpt.info(f"Logging in to {cfg.server_url} as {cfg.username}…")
                 login_result = client.login(cfg.username, cfg.password)
@@ -364,8 +375,7 @@ def import_video(
                     description=video_description,
                 )
                 rpt.success(
-                    f"Video registered: videos_id={reg.videos_id} "
-                    f"hash={reg.video_id_hash[:12]}…"
+                    f"Video registered: videos_id={reg.videos_id} hash={reg.video_id_hash[:12]}…"
                 )
                 if reg.msg:
                     rpt.info(f"  Server message: {reg.msg}")
@@ -453,9 +463,7 @@ def import_video(
                 if done_result.get("error"):
                     rpt.warning(f"Notify-done error: {done_result.get('msg', 'unknown')}")
                 else:
-                    rpt.success(
-                        f"Done! Video is live: {cfg.server_url}video/{reg.videos_id}"
-                    )
+                    rpt.success(f"Done! Video is live: {cfg.server_url}video/{reg.videos_id}")
 
         except AVideoAPIError as exc:
             rpt.error(f"AVideo API error: {exc}")
@@ -467,6 +475,7 @@ def import_video(
             rpt.error(f"Unexpected error: {exc}")
             if debug:
                 import traceback
+
                 traceback.print_exc()
             raise typer.Exit(1) from exc
         finally:
@@ -506,7 +515,7 @@ def serve(
     if not no_browser:
         # Open after a short delay so the server is ready
         import threading
+
         threading.Timer(1.0, lambda: webbrowser.open(url)).start()
 
     uvicorn.run(fastapi_app, host=host, port=port)
-

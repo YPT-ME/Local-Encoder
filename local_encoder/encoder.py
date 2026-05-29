@@ -31,14 +31,14 @@ EncodeProgressCallback = Callable[[int, int], None]
 
 # Mirrors AVideo Format.php ENCODING_SETTINGS
 ENCODING_SETTINGS: dict[int, dict[str, int]] = {
-    240:  {"minrate": 300,   "maxrate": 500,   "bufsize": 1000,  "audioBitrate": 48},
-    360:  {"minrate": 500,   "maxrate": 800,   "bufsize": 1600,  "audioBitrate": 64},
-    480:  {"minrate": 800,   "maxrate": 1000,  "bufsize": 2000,  "audioBitrate": 96},
-    540:  {"minrate": 1000,  "maxrate": 1500,  "bufsize": 3000,  "audioBitrate": 96},
-    720:  {"minrate": 1500,  "maxrate": 2000,  "bufsize": 4000,  "audioBitrate": 128},
-    1080: {"minrate": 3000,  "maxrate": 4000,  "bufsize": 8000,  "audioBitrate": 128},
-    1440: {"minrate": 6000,  "maxrate": 8000,  "bufsize": 16000, "audioBitrate": 160},
-    2160: {"minrate": 8000,  "maxrate": 12000, "bufsize": 24000, "audioBitrate": 160},
+    240: {"minrate": 300, "maxrate": 500, "bufsize": 1000, "audioBitrate": 48},
+    360: {"minrate": 500, "maxrate": 800, "bufsize": 1600, "audioBitrate": 64},
+    480: {"minrate": 800, "maxrate": 1000, "bufsize": 2000, "audioBitrate": 96},
+    540: {"minrate": 1000, "maxrate": 1500, "bufsize": 3000, "audioBitrate": 96},
+    720: {"minrate": 1500, "maxrate": 2000, "bufsize": 4000, "audioBitrate": 128},
+    1080: {"minrate": 3000, "maxrate": 4000, "bufsize": 8000, "audioBitrate": 128},
+    1440: {"minrate": 6000, "maxrate": 8000, "bufsize": 16000, "audioBitrate": 160},
+    2160: {"minrate": 8000, "maxrate": 12000, "bufsize": 24000, "audioBitrate": 160},
 }
 
 ALLOWED_RESOLUTIONS: list[int] = sorted(ENCODING_SETTINGS.keys())
@@ -64,26 +64,37 @@ def encode_mp4(
     """
     if resolution not in ENCODING_SETTINGS:
         raise ValueError(
-            f"Unsupported resolution {resolution}p. "
-            f"Choose from: {ALLOWED_RESOLUTIONS}"
+            f"Unsupported resolution {resolution}p. Choose from: {ALLOWED_RESOLUTIONS}"
         )
     s = ENCODING_SETTINGS[resolution]
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     cmd = [
         ffmpeg_bin,
-        "-i", str(input_path),
-        "-preset", "veryfast",
-        "-vf", f"scale=-2:{resolution}",
-        "-b:v",      f"{s['maxrate']}k",
-        "-minrate",  f"{s['minrate']}k",
-        "-maxrate",  f"{s['maxrate']}k",
-        "-bufsize",  f"{s['bufsize']}k",
-        "-c:v",      "h264",
-        "-pix_fmt",  "yuv420p",
-        "-c:a",      "aac",
-        "-b:a",      f"{s['audioBitrate']}k",
-        "-movflags", "+faststart",
+        "-i",
+        str(input_path),
+        "-preset",
+        "veryfast",
+        "-vf",
+        f"scale=-2:{resolution}",
+        "-b:v",
+        f"{s['maxrate']}k",
+        "-minrate",
+        f"{s['minrate']}k",
+        "-maxrate",
+        f"{s['maxrate']}k",
+        "-bufsize",
+        f"{s['bufsize']}k",
+        "-c:v",
+        "h264",
+        "-pix_fmt",
+        "yuv420p",
+        "-c:a",
+        "aac",
+        "-b:a",
+        f"{s['audioBitrate']}k",
+        "-movflags",
+        "+faststart",
         "-y",
         str(output_path),
     ]
@@ -103,27 +114,18 @@ def encode_mp4(
         if duration_secs == 0.0 and "Duration:" in line:
             m = re.search(r"Duration:\s*(\d+):(\d+):([\d.]+)", line)
             if m:
-                duration_secs = (
-                    int(m.group(1)) * 3600
-                    + int(m.group(2)) * 60
-                    + float(m.group(3))
-                )
+                duration_secs = int(m.group(1)) * 3600 + int(m.group(2)) * 60 + float(m.group(3))
         # Report encode progress
         if progress_callback and "time=" in line:
             m = re.search(r"time=(\d+):(\d+):([\d.]+)", line)
             if m and duration_secs > 0:
-                current = (
-                    int(m.group(1)) * 3600
-                    + int(m.group(2)) * 60
-                    + float(m.group(3))
-                )
+                current = int(m.group(1)) * 3600 + int(m.group(2)) * 60 + float(m.group(3))
                 progress_callback(int(current), int(duration_secs))
 
     proc.wait()
     if proc.returncode != 0:
         raise RuntimeError(
-            f"FFmpeg encode failed with exit code {proc.returncode} "
-            f"(command: {' '.join(cmd)})"
+            f"FFmpeg encode failed with exit code {proc.returncode} (command: {' '.join(cmd)})"
         )
     return output_path
 
@@ -158,17 +160,28 @@ def encode_mp4_multi(
         out = output_dir / f"{input_path.stem}_{res}p.mp4"
         output_files.append(out)
         cmd += [
-            "-preset", "veryfast",
-            "-vf", f"scale=-2:{res}",
-            "-b:v",      f"{s['maxrate']}k",
-            "-minrate",  f"{s['minrate']}k",
-            "-maxrate",  f"{s['maxrate']}k",
-            "-bufsize",  f"{s['bufsize']}k",
-            "-c:v",      "h264",
-            "-pix_fmt",  "yuv420p",
-            "-c:a",      "aac",
-            "-b:a",      f"{s['audioBitrate']}k",
-            "-movflags", "+faststart",
+            "-preset",
+            "veryfast",
+            "-vf",
+            f"scale=-2:{res}",
+            "-b:v",
+            f"{s['maxrate']}k",
+            "-minrate",
+            f"{s['minrate']}k",
+            "-maxrate",
+            f"{s['maxrate']}k",
+            "-bufsize",
+            f"{s['bufsize']}k",
+            "-c:v",
+            "h264",
+            "-pix_fmt",
+            "yuv420p",
+            "-c:a",
+            "aac",
+            "-b:a",
+            f"{s['audioBitrate']}k",
+            "-movflags",
+            "+faststart",
             "-y",
             str(out),
         ]
@@ -186,15 +199,11 @@ def encode_mp4_multi(
         if duration_secs == 0.0 and "Duration:" in line:
             m = re.search(r"Duration:\s*(\d+):(\d+):([\d.]+)", line)
             if m:
-                duration_secs = (
-                    int(m.group(1)) * 3600 + int(m.group(2)) * 60 + float(m.group(3))
-                )
+                duration_secs = int(m.group(1)) * 3600 + int(m.group(2)) * 60 + float(m.group(3))
         if progress_callback and "time=" in line:
             m = re.search(r"time=(\d+):(\d+):([\d.]+)", line)
             if m and duration_secs > 0:
-                current = (
-                    int(m.group(1)) * 3600 + int(m.group(2)) * 60 + float(m.group(3))
-                )
+                current = int(m.group(1)) * 3600 + int(m.group(2)) * 60 + float(m.group(3))
                 progress_callback(int(current), int(duration_secs))
     proc.wait()
     if proc.returncode != 0:
@@ -218,12 +227,17 @@ def extract_mp3(
     output_path.parent.mkdir(parents=True, exist_ok=True)
     cmd = [
         ffmpeg_bin,
-        "-i", str(input_path),
-        "-preset", "veryfast",
+        "-i",
+        str(input_path),
+        "-preset",
+        "veryfast",
         "-vn",
-        "-c:a", "libmp3lame",
-        "-b:a", f"{bitrate}k",
-        "-movflags", "+faststart",
+        "-c:a",
+        "libmp3lame",
+        "-b:a",
+        f"{bitrate}k",
+        "-movflags",
+        "+faststart",
         "-y",
         str(output_path),
     ]
@@ -249,18 +263,19 @@ def extract_thumbnail_jpg(
     output_path.parent.mkdir(parents=True, exist_ok=True)
     cmd = [
         ffmpeg_bin,
-        "-ss", str(int(seek_seconds)),
-        "-i", str(input_path),
-        "-vframes", "1",
+        "-ss",
+        str(int(seek_seconds)),
+        "-i",
+        str(input_path),
+        "-vframes",
+        "1",
         "-y",
         str(output_path),
     ]
     logger.info("Extracting JPG thumbnail: %s", " ".join(cmd))
     result = subprocess.run(cmd, capture_output=True, timeout=60)
     if result.returncode != 0 and not output_path.exists():
-        raise RuntimeError(
-            f"Thumbnail extraction failed: {result.stderr.decode(errors='replace')}"
-        )
+        raise RuntimeError(f"Thumbnail extraction failed: {result.stderr.decode(errors='replace')}")
     return output_path
 
 
@@ -284,17 +299,20 @@ def extract_thumbnail_gif(
         cmd_palette = [
             ffmpeg_bin,
             "-y",
-            "-ss", str(int(seek_seconds)),
-            "-t", str(duration),
-            "-i", str(input_path),
-            "-vf", "fps=10,scale=320:-1:flags=lanczos,palettegen",
+            "-ss",
+            str(int(seek_seconds)),
+            "-t",
+            str(duration),
+            "-i",
+            str(input_path),
+            "-vf",
+            "fps=10,scale=320:-1:flags=lanczos,palettegen",
             str(palette_path),
         ]
         result = subprocess.run(cmd_palette, capture_output=True, timeout=60)
         if result.returncode != 0 or not palette_path.exists():
             raise RuntimeError(
-                f"GIF palette generation failed: "
-                f"{result.stderr.decode(errors='replace')}"
+                f"GIF palette generation failed: {result.stderr.decode(errors='replace')}"
             )
 
         # Pass 2 – render GIF with letter-boxing to 320 × 180
@@ -310,11 +328,16 @@ def extract_thumbnail_gif(
         )
         cmd_gif = [
             ffmpeg_bin,
-            "-ss", str(int(seek_seconds)),
-            "-t", str(duration),
-            "-i", str(input_path),
-            "-i", str(palette_path),
-            "-filter_complex", scale_filter,
+            "-ss",
+            str(int(seek_seconds)),
+            "-t",
+            str(duration),
+            "-i",
+            str(input_path),
+            "-i",
+            str(palette_path),
+            "-filter_complex",
+            scale_filter,
             "-y",
             str(output_path),
         ]
@@ -325,10 +348,14 @@ def extract_thumbnail_gif(
         # Fallback – simpler scale without letter-boxing
         cmd_fallback = [
             ffmpeg_bin,
-            "-ss", str(int(seek_seconds)),
-            "-t", str(duration),
-            "-i", str(input_path),
-            "-i", str(palette_path),
+            "-ss",
+            str(int(seek_seconds)),
+            "-t",
+            str(duration),
+            "-i",
+            str(input_path),
+            "-i",
+            str(palette_path),
             "-filter_complex",
             "fps=10,scale=320:-1:flags=lanczos[x];[x][1:v]paletteuse",
             "-y",
@@ -336,9 +363,7 @@ def extract_thumbnail_gif(
         ]
         result = subprocess.run(cmd_fallback, capture_output=True, timeout=120)
         if result.returncode != 0 and not output_path.exists():
-            raise RuntimeError(
-                f"GIF generation failed: {result.stderr.decode(errors='replace')}"
-            )
+            raise RuntimeError(f"GIF generation failed: {result.stderr.decode(errors='replace')}")
         return output_path
 
     finally:
@@ -370,31 +395,40 @@ def extract_thumbnail_webp(
     cmd = [
         ffmpeg_bin,
         "-y",
-        "-ss", str(int(seek_seconds)),
-        "-t", str(duration),
-        "-i", str(input_path),
-        "-vcodec", "libwebp",
-        "-lossless", "1",
-        "-vf", scale_filter,
-        "-q", "60",
-        "-preset", "default",
-        "-loop", "0",
+        "-ss",
+        str(int(seek_seconds)),
+        "-t",
+        str(duration),
+        "-i",
+        str(input_path),
+        "-vcodec",
+        "libwebp",
+        "-lossless",
+        "1",
+        "-vf",
+        scale_filter,
+        "-q",
+        "60",
+        "-preset",
+        "default",
+        "-loop",
+        "0",
         "-an",
-        "-vsync", "0",
+        "-vsync",
+        "0",
         str(output_path),
     ]
     logger.info("Extracting WebP thumbnail: %s", " ".join(cmd))
     result = subprocess.run(cmd, capture_output=True, timeout=120)
     if result.returncode != 0 and not output_path.exists():
-        raise RuntimeError(
-            f"WebP extraction failed: {result.stderr.decode(errors='replace')}"
-        )
+        raise RuntimeError(f"WebP extraction failed: {result.stderr.decode(errors='replace')}")
     return output_path
 
 
 # ---------------------------------------------------------------------------
 # HLS helpers
 # ---------------------------------------------------------------------------
+
 
 def _probe_audio_tracks(input_path: Path, ffprobe_bin: str = "ffprobe") -> list[dict]:
     """Return a list of audio-track dicts with keys index, language, title.
@@ -403,10 +437,14 @@ def _probe_audio_tracks(input_path: Path, ffprobe_bin: str = "ffprobe") -> list[
     """
     cmd = [
         ffprobe_bin,
-        "-v", "error",
-        "-select_streams", "a",
-        "-show_entries", "stream=index:stream_tags=language,title",
-        "-of", "json",
+        "-v",
+        "error",
+        "-select_streams",
+        "a",
+        "-show_entries",
+        "stream=index:stream_tags=language,title",
+        "-of",
+        "json",
         str(input_path),
     ]
     try:
@@ -431,10 +469,15 @@ def _probe_audio_tracks(input_path: Path, ffprobe_bin: str = "ffprobe") -> list[
 def _probe_video_height(input_path: Path, ffprobe_bin: str = "ffprobe") -> int:
     """Return the video height in pixels (0 on failure)."""
     cmd = [
-        ffprobe_bin, "-v", "error",
-        "-select_streams", "v:0",
-        "-show_entries", "stream=height",
-        "-of", "csv=p=0",
+        ffprobe_bin,
+        "-v",
+        "error",
+        "-select_streams",
+        "v:0",
+        "-show_entries",
+        "stream=height",
+        "-of",
+        "csv=p=0",
         str(input_path),
     ]
     try:
@@ -512,18 +555,35 @@ def encode_hls(
         audio_ts_pattern = str(lang_dir / "audio_%03d.ts")
 
         cmd = [
-            ffmpeg_bin, "-y",
-            "-i", str(input_path),
+            ffmpeg_bin,
+            "-y",
+            "-i",
+            str(input_path),
             "-vn",
-            "-map", f"0:a:{track['index']}",
-            "-c:a", "aac", "-profile:a", "aac_low",
-            "-ac", "2", "-ar", "48000", "-b:a", "128k",
-            "-f", "hls",
-            "-hls_time", str(hls_time),
-            "-hls_flags", "independent_segments+split_by_time",
-            "-hls_playlist_type", "vod",
-            "-hls_segment_type", "mpegts",
-            "-hls_segment_filename", audio_ts_pattern,
+            "-map",
+            f"0:a:{track['index']}",
+            "-c:a",
+            "aac",
+            "-profile:a",
+            "aac_low",
+            "-ac",
+            "2",
+            "-ar",
+            "48000",
+            "-b:a",
+            "128k",
+            "-f",
+            "hls",
+            "-hls_time",
+            str(hls_time),
+            "-hls_flags",
+            "independent_segments+split_by_time",
+            "-hls_playlist_type",
+            "vod",
+            "-hls_segment_type",
+            "mpegts",
+            "-hls_segment_filename",
+            audio_ts_pattern,
             str(audio_m3u8),
         ]
         logger.info("HLS audio track %d: %s", track["index"], " ".join(cmd))
@@ -531,7 +591,8 @@ def encode_hls(
         if result.returncode != 0 or not audio_m3u8.exists():
             logger.warning(
                 "Audio track %d (%s) failed – skipping: %s",
-                track["index"], track["language"],
+                track["index"],
+                track["language"],
                 result.stderr.decode(errors="replace")[-400:],
             )
             shutil.rmtree(lang_dir, ignore_errors=True)
@@ -555,22 +616,38 @@ def encode_hls(
 
         ts_pattern = str(res_dir / "seg_%03d.ts")
         cmd_video += [
-            "-force_key_frames", f"expr:gte(t,n_forced*{hls_time})",
-            "-vf", f"scale=-2:{res}",
-            "-b:v", f"{rate}k",
-            "-r", "30",
-            "-movflags", "+faststart",
-            "-hls_time", str(hls_time),
-            "-hls_flags", "independent_segments+split_by_time",
-            "-hls_playlist_type", "vod",
-            "-map", "0:v",
-            "-c:v", "h264", "-profile:v", "main", "-pix_fmt", "yuv420p",
-            "-f", "hls",
+            "-force_key_frames",
+            f"expr:gte(t,n_forced*{hls_time})",
+            "-vf",
+            f"scale=-2:{res}",
+            "-b:v",
+            f"{rate}k",
+            "-r",
+            "30",
+            "-movflags",
+            "+faststart",
+            "-hls_time",
+            str(hls_time),
+            "-hls_flags",
+            "independent_segments+split_by_time",
+            "-hls_playlist_type",
+            "vod",
+            "-map",
+            "0:v",
+            "-c:v",
+            "h264",
+            "-profile:v",
+            "main",
+            "-pix_fmt",
+            "yuv420p",
+            "-f",
+            "hls",
         ]
         if encrypt:
             cmd_video += ["-hls_key_info_file", str(keyinfo_path)]
         cmd_video += [
-            "-hls_segment_filename", ts_pattern,
+            "-hls_segment_filename",
+            ts_pattern,
             str(output_m3u8),
         ]
 
@@ -587,15 +664,11 @@ def encode_hls(
         if duration_secs == 0.0 and "Duration:" in line:
             m = re.search(r"Duration:\s*(\d+):(\d+):([\d.]+)", line)
             if m:
-                duration_secs = (
-                    int(m.group(1)) * 3600 + int(m.group(2)) * 60 + float(m.group(3))
-                )
+                duration_secs = int(m.group(1)) * 3600 + int(m.group(2)) * 60 + float(m.group(3))
         if progress_callback and "time=" in line:
             m = re.search(r"time=(\d+):(\d+):([\d.]+)", line)
             if m and duration_secs > 0:
-                current = (
-                    int(m.group(1)) * 3600 + int(m.group(2)) * 60 + float(m.group(3))
-                )
+                current = int(m.group(1)) * 3600 + int(m.group(2)) * 60 + float(m.group(3))
                 # Scale progress over all resolutions
                 per_res = duration_secs * len(eligible)
                 # Approximate: count completed resolutions by inspecting m3u8s
@@ -604,9 +677,7 @@ def encode_hls(
                 progress_callback(int(overall), int(per_res))
     proc.wait()
     if proc.returncode != 0:
-        raise RuntimeError(
-            f"FFmpeg HLS encode failed with exit code {proc.returncode}"
-        )
+        raise RuntimeError(f"FFmpeg HLS encode failed with exit code {proc.returncode}")
 
     # ------------------------------------------------------------------
     # Master playlist
@@ -618,21 +689,18 @@ def encode_hls(
         master_lines.append(
             f'#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="audio_group",'
             f'NAME="{track["title"]}",LANGUAGE="{track["language"]}",'
-            f'DEFAULT={default},AUTOSELECT=YES,'
+            f"DEFAULT={default},AUTOSELECT=YES,"
             f'URI="audio_tracks/{track["lang_safe"]}/audio.m3u8"'
         )
 
     for res, _ in res_dirs:
         s = ENCODING_SETTINGS[res]
         # Approximate 16:9 width (even number)
-        w = (int(res * 16 / 9) // 2) * 2 if source_height == 0 else (
-            (int(res * 16 / 9) // 2) * 2
-        )
+        w = (int(res * 16 / 9) // 2) * 2 if source_height == 0 else ((int(res * 16 / 9) // 2) * 2)
         bandwidth = s["maxrate"] * 1000
         audio_part = ',AUDIO="audio_group"' if valid_audio_tracks else ""
         master_lines.append(
-            f"#EXT-X-STREAM-INF:BANDWIDTH={bandwidth},"
-            f"RESOLUTION={w}x{res}{audio_part}"
+            f"#EXT-X-STREAM-INF:BANDWIDTH={bandwidth},RESOLUTION={w}x{res}{audio_part}"
         )
         master_lines.append(f"res{res}/index.m3u8")
 
@@ -649,4 +717,3 @@ def encode_hls(
 
     logger.info("HLS ZIP created: %s (%d bytes)", zip_path, zip_path.stat().st_size)
     return zip_path
-

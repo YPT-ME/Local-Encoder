@@ -60,8 +60,9 @@ class ServerConfig:
 
     Mirrors the keys that influence encoding decisions in Format.php.
     """
+
     auto_convert_to_mp3: bool = False
-    single_resolution: int = 0   # 0 = disabled (encode all eligible resolutions)
+    single_resolution: int = 0  # 0 = disabled (encode all eligible resolutions)
     save_original_resolution: bool = False
     disable_hls: bool = False
     disable_mp4: bool = False
@@ -139,7 +140,7 @@ class AVideoClient:
         data = {
             "user": username,
             "pass": password,
-            "encodedPass": "false",   # tell server to hash the plain password
+            "encodedPass": "false",  # tell server to hash the plain password
             "redirectUri": self._base,
         }
         logger.debug("POST %slogin", self._base)

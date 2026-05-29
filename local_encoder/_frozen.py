@@ -4,6 +4,7 @@ When the app is packaged with PyInstaller, ``sys.frozen`` is set to True and
 ``sys._MEIPASS`` points to the temp directory where bundled files are extracted.
 We use this to locate the bundled ffmpeg/ffprobe binaries automatically.
 """
+
 from __future__ import annotations
 
 import os

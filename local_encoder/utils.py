@@ -28,9 +28,12 @@ def probe_duration(file_path: Path, ffprobe_bin: str = "ffprobe") -> float:
         result = subprocess.run(
             [
                 ffprobe_bin,
-                "-v", "quiet",
-                "-show_entries", "format=duration",
-                "-of", "csv=p=0",
+                "-v",
+                "quiet",
+                "-show_entries",
+                "format=duration",
+                "-of",
+                "csv=p=0",
                 str(file_path),
             ],
             capture_output=True,
@@ -42,4 +45,3 @@ def probe_duration(file_path: Path, ffprobe_bin: str = "ffprobe") -> float:
     except (subprocess.TimeoutExpired, subprocess.SubprocessError, ValueError):
         pass
     return 0.0
-

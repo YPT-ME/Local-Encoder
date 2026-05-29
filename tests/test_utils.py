@@ -35,4 +35,3 @@ def test_generate_file_id_is_hex():
 def test_generate_file_id_is_unique():
     ids = {generate_file_id() for _ in range(100)}
     assert len(ids) == 100
-
