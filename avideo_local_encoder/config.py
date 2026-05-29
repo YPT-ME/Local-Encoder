@@ -15,6 +15,8 @@ from typing import Optional
 
 from dotenv import load_dotenv
 
+from avideo_local_encoder._frozen import resolve_ffmpeg, resolve_ffprobe
+
 
 @dataclass
 class Config:
@@ -58,8 +60,8 @@ def load_config(env_file: Optional[Path] = None) -> Config:
         password=os.getenv("AVIDEO_PASSWORD", ""),
         categories_id=int(os.getenv("AVIDEO_CATEGORIES_ID", "0")),
         output_dir=Path(os.getenv("AVIDEO_OUTPUT_DIR", "output")),
-        ffmpeg_bin=os.getenv("FFMPEG_BIN", "ffmpeg"),
-        ffprobe_bin=os.getenv("FFPROBE_BIN", "ffprobe"),
+        ffmpeg_bin=os.getenv("FFMPEG_BIN", resolve_ffmpeg()),
+        ffprobe_bin=os.getenv("FFPROBE_BIN", resolve_ffprobe()),
         yt_dlp_bin=os.getenv("YTDLP_BIN", "yt-dlp"),
         streamers_id=int(os.getenv("AVIDEO_STREAMERS_ID", "0")),
         keep_files=os.getenv("AVIDEO_KEEP_FILES", "false").lower() == "true",

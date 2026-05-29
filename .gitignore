@@ -1,3 +1,4 @@
 .env
 avideo_local_encoder/__pycache__/*
 tests/__pycache__/*
+output/*

@@ -53,6 +53,19 @@ class RegisterVideoResult:
     msg: str = ""
 
 
+@dataclass
+class ServerConfig:
+    """Relevant fields from AVideo's advancedCustom.json.php.
+
+    Mirrors the keys that influence encoding decisions in Format.php.
+    """
+    auto_convert_to_mp3: bool = False
+    single_resolution: int = 0   # 0 = disabled (encode all eligible resolutions)
+    save_original_resolution: bool = False
+    disable_hls: bool = False
+    disable_mp4: bool = False
+
+
 class AVideoAPIError(RuntimeError):
     """Raised when the AVideo API returns an error response."""
 
@@ -156,6 +169,42 @@ class AVideoClient:
         self._encrypted_pass = result.encrypted_pass
         logger.info("Logged in as %s (id=%d)", result.username, result.user_id)
         return result
+
+    def get_server_config(self) -> ServerConfig:
+        """Fetch AVideo's advanced config from advancedCustom.json.php.
+
+        Mirrors the ``getAdvancedCustomizedObjectData()`` call in Format.php
+        that controls autoConvertVideosToMP3, singleResolution, etc.
+        Returns a ``ServerConfig`` with safe defaults on failure.
+        """
+        url = self._url("plugin/CustomizeAdvanced/advancedCustom.json.php")
+        try:
+            resp = self._http.get(url, timeout=15)
+            resp.raise_for_status()
+            data: dict[str, Any] = resp.json()
+        except Exception as exc:
+            logger.warning("Could not fetch server config (%s); using defaults", exc)
+            return ServerConfig()
+
+        single_res_raw = data.get("singleResolution") or {}
+        if isinstance(single_res_raw, dict):
+            try:
+                single_res = int(single_res_raw.get("value", 0) or 0)
+            except (ValueError, TypeError):
+                single_res = 0
+        else:
+            try:
+                single_res = int(single_res_raw or 0)
+            except (ValueError, TypeError):
+                single_res = 0
+
+        return ServerConfig(
+            auto_convert_to_mp3=bool(data.get("autoConvertVideosToMP3")),
+            single_resolution=single_res,
+            save_original_resolution=bool(data.get("saveOriginalVideoResolution")),
+            disable_hls=bool(data.get("doNotShowEncoderAutomaticHLS")),
+            disable_mp4=bool(data.get("doNotShowEncoderAutomaticMP4")),
+        )
 
     def register_video(
         self,

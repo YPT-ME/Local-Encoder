@@ -18,12 +18,15 @@ from typing import Annotated, Optional
 import typer
 
 from avideo_local_encoder import __version__
-from avideo_local_encoder.avideo_client import AVideoAPIError, AVideoClient
+from avideo_local_encoder.avideo_client import AVideoAPIError, AVideoClient, ServerConfig
 from avideo_local_encoder.config import Config, load_config
 from avideo_local_encoder.downloader import download_video, get_video_info
 from avideo_local_encoder.encoder import (
     ALLOWED_RESOLUTIONS,
+    encode_hls,
     encode_mp4,
+    encode_mp4_multi,
+    extract_mp3,
     extract_thumbnail_gif,
     extract_thumbnail_jpg,
     extract_thumbnail_webp,
@@ -83,14 +86,30 @@ def import_video(
         ),
     ] = None,
     # Encoding
+    format: Annotated[
+        str,
+        typer.Option(
+            "--format",
+            "-f",
+            help=(
+                "Output format: 'auto' (use server config), 'mp4' (multi-resolution MP4), "
+                "or 'hls' (multi-resolution HLS ZIP with AES-128 encryption). "
+                "Default: 'auto'."
+            ),
+        ),
+    ] = "auto",
     resolution: Annotated[
         int,
         typer.Option(
             "--resolution",
             "-r",
-            help=f"Target height in pixels. Allowed: {ALLOWED_RESOLUTIONS}.",
+            help=(
+                f"Maximum height in pixels for MP4/HLS. Allowed: {ALLOWED_RESOLUTIONS}. "
+                f"All eligible resolutions up to this value are encoded. "
+                f"0 = encode all resolutions ≤ source height."
+            ),
         ),
-    ] = 1080,
+    ] = 0,
     # Metadata
     title: Annotated[
         Optional[str],
@@ -168,12 +187,12 @@ def import_video(
         console.print(f"[red]Configuration error:[/red] {exc}")
         raise typer.Exit(1)
 
-    # Snap to the nearest supported resolution
-    actual_resolution = nearest_resolution(resolution)
-    if actual_resolution != resolution:
+    # Snap to the nearest supported resolution (only used for single-res fallback)
+    actual_resolution = nearest_resolution(resolution) if resolution > 0 else 0
+    if resolution > 0 and actual_resolution != resolution:
         console.print(
             f"  [yellow]⚠[/yellow] Resolution {resolution}p is not in the allowed list; "
-            f"using {actual_resolution}p instead."
+            f"using {actual_resolution}p as the maximum."
         )
 
     # ------------------------------------------------------------------
@@ -225,24 +244,80 @@ def import_video(
             seek = min(duration * 0.25, 600.0) if duration > 0 else 5.0
 
             # ----------------------------------------------------------
+            # Step 2b – Fetch server config (determines format + resolution cap)
+            # ----------------------------------------------------------
+            rpt.info(f"Fetching server config from {cfg.server_url}…")
+            with AVideoClient(cfg.server_url, ssl_verify=cfg.ssl_verify) as _cfg_client:
+                server_cfg = _cfg_client.get_server_config()
+            rpt.info(
+                f"Server config: auto_mp3={server_cfg.auto_convert_to_mp3}, "
+                f"single_res={server_cfg.single_resolution}, "
+                f"disable_hls={server_cfg.disable_hls}, disable_mp4={server_cfg.disable_mp4}"
+            )
+
+            # ----------------------------------------------------------
             # Step 3 – Encode
             # ----------------------------------------------------------
-            encoded_name = f"{filename_stem}_{actual_resolution}p.mp4"
-            encoded_file = work_dir / encoded_name
-            files_to_clean.append(encoded_file)
+            fmt = format.lower()
+            if fmt not in ("auto", "mp4", "hls"):
+                console.print(f"[red]Unknown format '{format}'; use 'auto', 'mp4', or 'hls'.[/red]")
+                raise typer.Exit(1)
 
-            rpt.begin_encode(f"Encoding {actual_resolution}p", int(duration) or 100)
-            encode_mp4(
-                input_path=raw_file,
-                output_path=encoded_file,
-                resolution=actual_resolution,
-                ffmpeg_bin=cfg.ffmpeg_bin,
-                progress_callback=rpt.on_encode,
-            )
-            rpt.success(f"Encoded  → {encoded_file.name}")
+            # Resolve 'auto' format using server config
+            if fmt == "auto":
+                fmt = "hls" if not server_cfg.disable_hls else "mp4"
+                rpt.info(f"Auto format resolved to: {fmt}")
 
-            # Re-probe duration from the encoded file for accuracy
-            encoded_duration = probe_duration(encoded_file, cfg.ffprobe_bin) or duration
+            # Resolve resolution cap: explicit flag > server singleResolution > all
+            if actual_resolution > 0:
+                res_cap = actual_resolution
+            elif server_cfg.single_resolution > 0:
+                res_cap = server_cfg.single_resolution
+                rpt.info(f"Using server singleResolution cap: {res_cap}p")
+            else:
+                res_cap = max(ALLOWED_RESOLUTIONS)
+
+            target_resolutions = [r for r in ALLOWED_RESOLUTIONS if r <= res_cap]
+            if not target_resolutions:
+                target_resolutions = [ALLOWED_RESOLUTIONS[0]]
+
+            encoded_files: list[Path] = []  # list of (path, ext, resolution) tuples
+            encoded_duration = duration
+
+            if fmt == "mp4":
+                res_label = f"up to {res_cap}p" if res_cap < max(ALLOWED_RESOLUTIONS) else "all resolutions"
+                rpt.begin_encode(f"Encoding MP4 ({res_label})", int(duration) or 100)
+                mp4_files = encode_mp4_multi(
+                    input_path=raw_file,
+                    output_dir=work_dir,
+                    resolutions=target_resolutions,
+                    ffmpeg_bin=cfg.ffmpeg_bin,
+                    ffprobe_bin=cfg.ffprobe_bin,
+                    progress_callback=rpt.on_encode,
+                )
+                files_to_clean.extend(mp4_files)
+                encoded_files.extend(mp4_files)
+                rpt.success(f"Encoded {len(mp4_files)} MP4 file(s)")
+                if mp4_files:
+                    encoded_duration = probe_duration(mp4_files[-1], cfg.ffprobe_bin) or duration
+                upload_ext = "mp4"
+                upload_resolution = max(int(f.stem.rsplit("_", 1)[-1].rstrip("p")) for f in mp4_files) if mp4_files else res_cap
+
+            else:  # hls
+                rpt.begin_encode(f"Encoding HLS (up to {res_cap}p)", int(duration * len(target_resolutions)) or 100)
+                hls_zip = encode_hls(
+                    input_path=raw_file,
+                    output_dir=work_dir,
+                    resolutions=target_resolutions,
+                    ffmpeg_bin=cfg.ffmpeg_bin,
+                    ffprobe_bin=cfg.ffprobe_bin,
+                    progress_callback=rpt.on_encode,
+                )
+                files_to_clean.append(hls_zip)
+                encoded_files = [hls_zip]
+                rpt.success(f"HLS ZIP → {hls_zip.name}")
+                upload_ext = "zip"
+                upload_resolution = res_cap
 
             # ----------------------------------------------------------
             # Step 4 – Generate thumbnails
@@ -277,12 +352,16 @@ def import_video(
                 login_result = client.login(cfg.username, cfg.password)
                 rpt.success(f"Logged in as {login_result.name or login_result.username}")
 
-                # 5b. Register video record
+                # fmt and server_cfg already resolved before Step 3
+                resolved_fmt = fmt
+
+                # 5b. Register video record  (use highest resolution for registration)
                 rpt.info("Registering video with AVideo…")
+                reg_ext = "zip" if resolved_fmt == "hls" else "mp4"
                 reg = client.register_video(
                     title=video_title,
-                    format_ext="mp4",
-                    resolution=actual_resolution,
+                    format_ext=reg_ext,
+                    resolution=upload_resolution,
                     duration=encoded_duration,
                     categories_id=cfg.categories_id,
                     description=video_description,
@@ -294,24 +373,67 @@ def import_video(
                 if reg.msg:
                     rpt.info(f"  Server message: {reg.msg}")
 
-                # 5c. Upload encoded file
-                file_size = encoded_file.stat().st_size
-                rpt.begin_upload(file_size)
-                upload_result = client.upload_file(
-                    file_path=encoded_file,
-                    videos_id=reg.videos_id,
-                    video_id_hash=reg.video_id_hash,
-                    title=video_title,
-                    format_ext="mp4",
-                    resolution=actual_resolution,
-                    duration=encoded_duration,
-                    categories_id=cfg.categories_id,
-                    description=video_description,
-                    progress_callback=rpt.on_upload,
-                )
-                rpt.success(f"File uploaded ({file_size // 1_048_576} MiB)")
-                if upload_result.get("msg"):
-                    rpt.info(f"  Server: {upload_result['msg']}")
+                # 5c. Upload encoded file(s)
+                # For multi-res MP4 upload smallest files first (like PHP encoder),
+                # then the largest last so the server's format is set by the highest quality file.
+                upload_queue = list(encoded_files)
+                if resolved_fmt == "mp4" and len(upload_queue) > 1:
+                    upload_queue.sort(key=lambda p: p.stat().st_size)
+
+                for idx, enc_file in enumerate(upload_queue):
+                    file_size = enc_file.stat().st_size
+                    # Parse resolution from filename (e.g. video_720p.mp4 → 720)
+                    try:
+                        file_res = int(enc_file.stem.rsplit("_", 1)[-1].rstrip("p"))
+                    except ValueError:
+                        file_res = upload_resolution
+                    file_ext = "zip" if enc_file.suffix == ".zip" else "mp4"
+
+                    rpt.begin_upload(file_size)
+                    upload_result = client.upload_file(
+                        file_path=enc_file,
+                        videos_id=reg.videos_id,
+                        video_id_hash=reg.video_id_hash,
+                        title=video_title,
+                        format_ext=file_ext,
+                        resolution=file_res,
+                        duration=encoded_duration,
+                        categories_id=cfg.categories_id,
+                        description=video_description,
+                        progress_callback=rpt.on_upload,
+                    )
+                    rpt.success(
+                        f"Uploaded {enc_file.name} "
+                        f"({file_size // 1_048_576} MiB)"
+                        + (f" [{idx + 1}/{len(upload_queue)}]" if len(upload_queue) > 1 else "")
+                    )
+                    if upload_result.get("msg"):
+                        rpt.info(f"  Server: {upload_result['msg']}")
+
+                # 5c-ii. Auto-extract and upload MP3 if server config requires it
+                if server_cfg.auto_convert_to_mp3 and resolved_fmt != "hls":
+                    mp3_file = work_dir / f"{filename_stem}.mp3"
+                    files_to_clean.append(mp3_file)
+                    try:
+                        rpt.info("Auto-extracting MP3 (server config: autoConvertVideosToMP3)…")
+                        extract_mp3(raw_file, mp3_file, ffmpeg_bin=cfg.ffmpeg_bin)
+                        mp3_size = mp3_file.stat().st_size
+                        rpt.begin_upload(mp3_size)
+                        client.upload_file(
+                            file_path=mp3_file,
+                            videos_id=reg.videos_id,
+                            video_id_hash=reg.video_id_hash,
+                            title=video_title,
+                            format_ext="mp3",
+                            resolution=0,
+                            duration=encoded_duration,
+                            categories_id=cfg.categories_id,
+                            description=video_description,
+                            progress_callback=rpt.on_upload,
+                        )
+                        rpt.success(f"MP3 uploaded ({mp3_size // 1_048_576} MiB)")
+                    except Exception as exc:
+                        rpt.warning(f"MP3 auto-extraction skipped: {exc}")
 
                 # 5d. Upload thumbnails
                 rpt.info("Uploading thumbnails…")
