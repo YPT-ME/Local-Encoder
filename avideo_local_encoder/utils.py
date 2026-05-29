@@ -43,10 +43,3 @@ def probe_duration(file_path: Path, ffprobe_bin: str = "ffprobe") -> float:
         pass
     return 0.0
 
-
-def seconds_to_hms(seconds: float) -> str:
-    """Convert a float number of seconds to HH:MM:SS.xx notation."""
-    hours = int(seconds // 3600)
-    minutes = int((seconds % 3600) // 60)
-    secs = seconds % 60
-    return f"{hours:02d}:{minutes:02d}:{secs:05.2f}"

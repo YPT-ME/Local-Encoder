@@ -15,7 +15,6 @@ dependencies = [
     "yt-dlp>=2024.1.0",
     "python-dotenv>=1.0",
     "rich>=13.0",
-    "keyring>=25.0",
     "fastapi>=0.111",
     "uvicorn>=0.29",
     "python-multipart>=0.0.9",

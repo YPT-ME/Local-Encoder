@@ -4,16 +4,16 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>AVideo Local Encoder</title>
-<script src="https://cdn.tailwindcss.com"></script>
+<script src="/static/vendor/tailwind.js"></script>
 <script>
   tailwind.config = {
     darkMode: 'class',
     theme: { extend: { colors: { brand: { DEFAULT: '#4a7cff', dark: '#2d5ce0' } } } }
   }
 </script>
-<script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
-<script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
-<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script src="/static/vendor/react.development.js" crossorigin></script>
+<script src="/static/vendor/react-dom.development.js" crossorigin></script>
+<script src="/static/vendor/babel.min.js"></script>
 <style>
   body { background: #0f1117; }
   .log-scroll::-webkit-scrollbar { width: 6px; }
@@ -120,7 +120,9 @@ function App() {
   const [localFile, setLocalFile] = useState(null);
   const [vidTitle, setVidTitle]   = useState('');
   const [vidDesc, setVidDesc]     = useState('');
-  const [catId, setCatId]         = useLocalStorage('ave_cat_id', '0');
+  // Category key is scoped to server+user so each site remembers its own last category
+  const catKey = `ave_cat_id::${serverUrl}::${username}`;
+  const [catId, setCatId]         = useLocalStorage(catKey, '0');
   const [format, setFormat]       = useLocalStorage('ave_format', 'auto');
   // resolutions: stored as JSON-encoded int array, e.g. [360, 720]
   const [resolutionsRaw, setResolutionsRaw] = useLocalStorage('ave_resolutions', '[]');
@@ -195,6 +197,11 @@ function App() {
     return () => clearInterval(poll);
   }, []);
 
+  // Auto-test connection on mount if credentials are already saved
+  useEffect(() => {
+    if (serverUrl && username) testConnection();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   async function testConnection() {
     setTesting(true); setConnStatus(null); setCatsLoaded(false); setCategories([]);
     try {
@@ -204,7 +211,7 @@ function App() {
       });
       const data = await res.json();
       if (data.ok) {
-        setConnStatus({ ok: true, text: data.name || 'Connected' });
+        setConnStatus({ ok: true, text: data.name || 'Connected', logoUrl: data.logo_url || null });
         fetchCategories();
       } else {
         setConnStatus({ ok: false, text: data.error || 'Failed' });
@@ -220,7 +227,13 @@ function App() {
       if (!res.ok) throw new Error(await res.text());
       const cats = await res.json();
       setCategories(cats);
-      if (cats.length > 0) setCatId(String(cats[0].id));
+      if (cats.length > 0) {
+        // Keep the saved category if it still exists on this server, else fall back to first
+        const saved = localStorage.getItem(catKey);
+        const savedId = saved ? JSON.parse(saved) : null;
+        const exists = cats.some(c => String(c.id) === String(savedId));
+        if (!exists) setCatId(String(cats[0].id));
+      }
     } catch (e) { /* silently ignore, form still works */ }
     finally { setCatsLoaded(true); }
   }
@@ -270,8 +283,23 @@ function App() {
 
   return (
     <div className="mx-auto max-w-2xl px-4 py-10 space-y-5">
-      <h1 className="text-2xl font-bold text-brand">AVideo Local Encoder</h1>
-
+      {/* Logo area — always reserves space (500×140 px aspect ratio) to prevent layout shift */}
+      <div className="flex justify-center py-2">
+        <div style={{ width: 250, height: 70 }} className="flex items-center justify-center">
+          {connStatus?.ok && connStatus.logoUrl
+            ? <img
+                src={connStatus.logoUrl}
+                alt="Site logo"
+                width={250} height={70}
+                className="object-contain"
+                style={{ filter: 'drop-shadow(0 0 4px rgba(0,0,0,0.85)) drop-shadow(0 0 2px rgba(255,255,255,0.7))' }}
+                onError={e => { e.currentTarget.style.visibility = 'hidden'; }}
+              />
+            : <div className="w-full h-full rounded-lg bg-slate-800/40" />
+          }
+        </div>
+      </div>
+      
       <Card>
         <h2 className="text-sm font-semibold text-slate-300 mb-4">AVideo Server</h2>
         <div className="space-y-3">
@@ -336,7 +364,13 @@ function App() {
               options={[{ value:'auto',label:'Auto'},{ value:'mp4',label:'MP4'},{ value:'hls',label:'HLS'}]} />
           </div>
           <div>
-            <span className="text-xs text-slate-400 mb-2 block">Resolutions <span className="text-slate-500">(empty = all)</span></span>
+            <div className="flex items-baseline gap-2 mb-2">
+              <span className="text-xs text-slate-400">Resolutions</span>
+              {resolutions.length === 0
+                ? <span className="text-xs text-slate-500">— all available resolutions will be encoded</span>
+                : <span className="text-xs text-brand font-semibold">will encode: {resolutions.map(r => r >= 2160 ? '4K' : r+'p').join(', ')}</span>
+              }
+            </div>
             <div className="flex flex-wrap gap-2">
               {[240,360,480,540,720,1080,1440,2160].map(r => (
                 <label key={r} className={cls(

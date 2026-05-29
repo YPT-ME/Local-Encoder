@@ -137,7 +137,8 @@ def test_connection(req: TestConnectionRequest) -> dict[str, Any]:
     try:
         with AVideoClient(url, ssl_verify=req.ssl_verify) as client:
             result = client.login(req.username, req.password)
-        return {"ok": True, "name": result.name or result.username}
+        logo_url = url + "videos/userPhoto/logo.png"
+        return {"ok": True, "name": result.name or result.username, "logo_url": logo_url}
     except AVideoAPIError as exc:
         return {"ok": False, "error": str(exc)}
     except Exception as exc:
