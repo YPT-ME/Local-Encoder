@@ -67,7 +67,7 @@ exe = EXE(
     a.zipfiles,
     a.datas,
     [],
-    name="avideo-local-encoder",
+    name="local-encoder",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

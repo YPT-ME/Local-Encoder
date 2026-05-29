@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from avideo_local_encoder.encoder import ALLOWED_RESOLUTIONS, ENCODING_SETTINGS, nearest_resolution
+from local_encoder.encoder import ALLOWED_RESOLUTIONS, ENCODING_SETTINGS, nearest_resolution
 
 
 def test_all_resolutions_have_settings():

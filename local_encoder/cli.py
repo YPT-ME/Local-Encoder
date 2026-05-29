@@ -17,11 +17,11 @@ from typing import Annotated, Optional
 
 import typer
 
-from avideo_local_encoder import __version__
-from avideo_local_encoder.avideo_client import AVideoAPIError, AVideoClient, ServerConfig
-from avideo_local_encoder.config import Config, load_config
-from avideo_local_encoder.downloader import download_video, get_video_info
-from avideo_local_encoder.encoder import (
+from local_encoder import __version__
+from local_encoder.avideo_client import AVideoAPIError, AVideoClient, ServerConfig
+from local_encoder.config import Config, load_config
+from local_encoder.downloader import download_video, get_video_info
+from local_encoder.encoder import (
     ALLOWED_RESOLUTIONS,
     encode_hls,
     encode_mp4,
@@ -32,8 +32,8 @@ from avideo_local_encoder.encoder import (
     extract_thumbnail_webp,
     nearest_resolution,
 )
-from avideo_local_encoder.progress import ProgressReporter, console
-from avideo_local_encoder.utils import probe_duration, sanitize_filename
+from local_encoder.progress import ProgressReporter, console
+from local_encoder.utils import probe_duration, sanitize_filename
 
 app = typer.Typer(
     name="avideo-local-encoder",
@@ -502,7 +502,7 @@ def serve(
 
     import uvicorn
 
-    from avideo_local_encoder.server import app as fastapi_app
+    from local_encoder.server import app as fastapi_app
 
     url = f"http://{host}:{port}"
     typer.echo(f"Starting web UI at {url}")

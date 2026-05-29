@@ -1,9 +1,11 @@
-# avideo-local-encoder
+# local-encoder
 
-A Python 3.11+ CLI that downloads a video from any URL supported by yt-dlp,
-re-encodes it with FFmpeg at a target resolution, generates thumbnails, and
-uploads the result to an [AVideo](https://github.com/WWBN/AVideo) server using
-the same encoder API protocol as the built-in PHP encoder.
+A Python 3.11+ tool that downloads a video from any URL supported by yt-dlp,
+re-encodes it with FFmpeg, generates thumbnails, and uploads the result to an
+[AVideo](https://github.com/WWBN/AVideo) server.
+
+Comes with a **web UI** (`local-encoder serve`) for easy browser-based use,
+or a **CLI** (`local-encoder import <url>`) for scripting.
 
 ---
 
@@ -12,7 +14,7 @@ the same encoder API protocol as the built-in PHP encoder.
 | Tool | Minimum version | Notes |
 |------|-----------------|-------|
 | Python | 3.11 | |
-| FFmpeg / FFprobe | 4.x+ | Must be on `PATH` or configured via env vars |
+| FFmpeg / FFprobe | 4.x+ | Must be on `PATH` or set via `FFMPEG_BIN` / `FFPROBE_BIN` |
 | yt-dlp | latest | Installed automatically as a Python dependency |
 
 ---
@@ -34,9 +36,22 @@ pip install -e .
 
 ---
 
-## Configuration
+## Web UI
 
-Copy `.env.example` to `.env` and fill in your values:
+```bash
+local-encoder serve
+# Open http://localhost:8000 in your browser
+```
+
+Server URL, credentials, category and SSL settings are entered in the browser
+and saved automatically in `localStorage` — no config file needed.
+
+---
+
+## Configuration (optional)
+
+Only needed if you use the CLI or want to override binary paths.
+Copy `.env.example` to `.env`:
 
 ```bash
 cp .env.example .env
@@ -44,45 +59,36 @@ cp .env.example .env
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `AVIDEO_SERVER_URL` | Full URL to your AVideo site (with trailing `/`) | *(required)* |
-| `AVIDEO_USERNAME` | AVideo username | *(required)* |
-| `AVIDEO_PASSWORD` | AVideo password (plain text; hashed server-side) | *(required)* |
-| `AVIDEO_CATEGORIES_ID` | Category ID to assign to imported videos | `0` |
-| `AVIDEO_OUTPUT_DIR` | Working directory for temp files | `output` |
-| `AVIDEO_KEEP_FILES` | `true` to keep files after upload | `false` |
-| `AVIDEO_SSL_VERIFY` | `false` to skip TLS cert verification | `true` |
-| `AVIDEO_STREAMERS_ID` | Encoder `streamers_id` sent to the server | `0` |
+| `AVIDEO_KEEP_FILES` | `true` to keep encoded files after upload | `false` |
 | `FFMPEG_BIN` | Path to `ffmpeg` binary | `ffmpeg` |
 | `FFPROBE_BIN` | Path to `ffprobe` binary | `ffprobe` |
-| `YTDLP_BIN` | Path to `yt-dlp` binary (not used directly; Python API is used) | `yt-dlp` |
-
-All variables can also be overridden with CLI flags (see `--help`).
+| `YTDLP_BIN` | Path to `yt-dlp` binary | `yt-dlp` |
 
 ---
 
-## Usage
+## CLI Usage
 
 ```bash
-# Basic import (reads server/credentials from .env)
-avideo-local-encoder import "https://youtu.be/dQw4w9WgXcQ"
+# Basic import (reads server/credentials from CLI flags or .env)
+local-encoder import "https://youtu.be/dQw4w9WgXcQ"
 
 # Override server and credentials on the command line
-avideo-local-encoder import "https://youtu.be/dQw4w9WgXcQ" \
+local-encoder import "https://youtu.be/dQw4w9WgXcQ" \
     --server https://myavideo.example.com/ \
     --user admin \
     --password secret
 
 # Encode at 720p instead of the default 1080p
-avideo-local-encoder import "https://youtu.be/..." --resolution 720
+local-encoder import "https://youtu.be/..." --resolution 720
 
 # Assign to category 3, keep temp files, verbose logging
-avideo-local-encoder import "https://youtu.be/..." \
+local-encoder import "https://youtu.be/..." \
     --categories-id 3 \
     --keep-files \
     --debug
 
 # Use a self-signed certificate (disables TLS verification)
-avideo-local-encoder import "https://local.avideo/" --ssl-no-verify
+local-encoder import "https://local.avideo/" --ssl-no-verify
 ```
 
 ---
@@ -136,7 +142,7 @@ ruff check .
 ruff format .
 
 # Type-check
-mypy avideo_local_encoder
+mypy local_encoder
 ```
 
 ---

@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from avideo_local_encoder.config import Config, load_config
+from local_encoder.config import Config, load_config
 
 
 def test_default_config():

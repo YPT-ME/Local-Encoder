@@ -20,10 +20,10 @@ from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from avideo_local_encoder.avideo_client import AVideoClient, AVideoAPIError
-from avideo_local_encoder.config import Config, load_config
-from avideo_local_encoder.downloader import download_video, get_video_info
-from avideo_local_encoder.encoder import (
+from local_encoder.avideo_client import AVideoClient, AVideoAPIError
+from local_encoder.config import Config, load_config
+from local_encoder.downloader import download_video, get_video_info
+from local_encoder.encoder import (
     ALLOWED_RESOLUTIONS,
     encode_hls,
     encode_mp4_multi,
@@ -32,7 +32,7 @@ from avideo_local_encoder.encoder import (
     extract_thumbnail_jpg,
     extract_thumbnail_webp,
 )
-from avideo_local_encoder.utils import probe_duration, sanitize_filename
+from local_encoder.utils import probe_duration, sanitize_filename
 
 logger = logging.getLogger(__name__)
 
@@ -618,4 +618,4 @@ def index() -> HTMLResponse:
     html_file = STATIC_DIR / "index.html"
     if html_file.exists():
         return HTMLResponse(html_file.read_text(encoding="utf-8"))
-    return HTMLResponse("<h1>UI not found</h1><p>Place index.html in avideo_local_encoder/static/</p>")
+    return HTMLResponse("<h1>UI not found</h1><p>Place index.html in local_encoder/static/</p>")

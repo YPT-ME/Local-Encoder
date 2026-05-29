@@ -1,5 +1,5 @@
 .env
-avideo_local_encoder/__pycache__/*
+local_encoder/__pycache__/*
 tests/__pycache__/*
 output/*
-avideo_local_encoder/static/vendor/*
+local_encoder/static/vendor/*

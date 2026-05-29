@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 
-from avideo_local_encoder.utils import generate_file_id, sanitize_filename
+from local_encoder.utils import generate_file_id, sanitize_filename
 
 
 def test_sanitize_filename_removes_forbidden_chars():

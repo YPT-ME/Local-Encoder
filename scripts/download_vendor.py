@@ -1,4 +1,4 @@
-"""Download vendored frontend dependencies into avideo_local_encoder/static/vendor/.
+"""Download vendored frontend dependencies into local_encoder/static/vendor/.
 
 Usage:
     python scripts/download_vendor.py
@@ -14,7 +14,7 @@ import sys
 import urllib.request
 from pathlib import Path
 
-VENDOR_DIR = Path(__file__).parent.parent / "avideo_local_encoder" / "static" / "vendor"
+VENDOR_DIR = Path(__file__).parent.parent / "local_encoder" / "static" / "vendor"
 
 # Pin exact URLs so builds are reproducible.
 # To upgrade: update the URL and the expected SHA-256.

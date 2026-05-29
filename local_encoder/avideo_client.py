@@ -24,7 +24,7 @@ from urllib.parse import urljoin
 
 import httpx
 
-from avideo_local_encoder.utils import generate_file_id
+from local_encoder.utils import generate_file_id
 
 logger = logging.getLogger(__name__)
 
