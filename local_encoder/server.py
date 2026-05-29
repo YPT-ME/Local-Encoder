@@ -6,22 +6,21 @@ Start with:
 """
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import queue
 import threading
 import uuid
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from fastapi import FastAPI, Form, HTTPException, UploadFile
 from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from local_encoder.avideo_client import AVideoClient, AVideoAPIError
-from local_encoder.config import Config, load_config
+from local_encoder.avideo_client import AVideoAPIError, AVideoClient
+from local_encoder.config import Config
 from local_encoder.downloader import download_video, get_video_info
 from local_encoder.encoder import (
     ALLOWED_RESOLUTIONS,
@@ -68,7 +67,7 @@ _worker_thread.start()
 
 def _enqueue(job_id: str, runner) -> None:
     """Register a job and push it onto the work queue."""
-    msg_queue: queue.Queue[Optional[str]] = queue.Queue()
+    msg_queue: queue.Queue[str | None] = queue.Queue()
     _jobs[job_id] = {
         "status": "pending",
         "queue": msg_queue,
@@ -160,7 +159,7 @@ def list_categories(
             return cats
     except Exception as exc:
         logger.warning("list_categories failed: %s", exc)
-        raise HTTPException(status_code=502, detail=str(exc))
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
 # ---------------------------------------------------------------------------
@@ -377,11 +376,14 @@ def start_import(req: ImportRequest) -> dict[str, str]:
 
         def emit(event: str, data: Any) -> None:
             if event == "info":
-                if data.get("title"): job["title"] = data["title"]
-                if data.get("thumbnail"): job["thumbnail"] = data["thumbnail"]
+                if data.get("title"):
+                    job["title"] = data["title"]
+                if data.get("thumbnail"):
+                    job["thumbnail"] = data["thumbnail"]
             if event == "progress":
                 step = data.get("step")
-                if step: job["pct"][step] = data.get("pct", 0)
+                if step:
+                    job["pct"][step] = data.get("pct", 0)
             msg_queue.put(f"event: {event}\ndata: {json.dumps(data)}\n\n")
 
         files_to_clean: list[Path] = []
@@ -470,7 +472,8 @@ def start_import(req: ImportRequest) -> dict[str, str]:
         finally:
             for f in files_to_clean:
                 try:
-                    if f.exists(): f.unlink()
+                    if f.exists():
+                        f.unlink()
                 except OSError:
                     pass
             msg_queue.put(None)
@@ -507,10 +510,12 @@ async def start_import_file(
 
         def emit(event: str, data: Any) -> None:
             if event == "info":
-                if data.get("title"): job["title"] = data["title"]
+                if data.get("title"):
+                    job["title"] = data["title"]
             if event == "progress":
                 step = data.get("step")
-                if step: job["pct"][step] = data.get("pct", 0)
+                if step:
+                    job["pct"][step] = data.get("pct", 0)
             msg_queue.put(f"event: {event}\ndata: {json.dumps(data)}\n\n")
 
         files_to_clean: list[Path] = []
@@ -570,7 +575,8 @@ async def start_import_file(
         finally:
             for f in files_to_clean:
                 try:
-                    if f.exists(): f.unlink()
+                    if f.exists():
+                        f.unlink()
                 except OSError:
                     pass
             msg_queue.put(None)

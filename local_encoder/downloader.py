@@ -7,8 +7,9 @@ AVideo/.compose/encoder/objects/Encoder.php.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any
 
 import yt_dlp
 import yt_dlp.utils
@@ -23,8 +24,8 @@ def download_video(
     url: str,
     output_dir: Path,
     filename_stem: str,
-    progress_callback: Optional[ProgressCallback] = None,
-    cookies_file: Optional[Path] = None,
+    progress_callback: ProgressCallback | None = None,
+    cookies_file: Path | None = None,
 ) -> Path:
     """Download *url* with yt-dlp and return the path to the local .mp4 file.
 
@@ -96,7 +97,7 @@ def download_video(
         },
     ]
 
-    last_error: Optional[Exception] = None
+    last_error: Exception | None = None
     for i, strategy in enumerate(strategies, 1):
         opts: dict[str, Any] = {**base_opts, **strategy}
         logger.info("yt-dlp strategy %d/%d: format=%s", i, len(strategies), opts.get("format"))

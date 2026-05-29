@@ -13,18 +13,17 @@ import logging
 import shutil
 import sys
 from pathlib import Path
-from typing import Annotated, Optional
+from typing import Annotated
 
 import typer
 
 from local_encoder import __version__
-from local_encoder.avideo_client import AVideoAPIError, AVideoClient, ServerConfig
-from local_encoder.config import Config, load_config
+from local_encoder.avideo_client import AVideoAPIError, AVideoClient
+from local_encoder.config import load_config
 from local_encoder.downloader import download_video, get_video_info
 from local_encoder.encoder import (
     ALLOWED_RESOLUTIONS,
     encode_hls,
-    encode_mp4,
     encode_mp4_multi,
     extract_mp3,
     extract_thumbnail_gif,
@@ -52,7 +51,7 @@ def _version_callback(value: bool) -> None:
 @app.callback()
 def _root(
     _version: Annotated[
-        Optional[bool],
+        bool | None,
         typer.Option(
             "--version",
             callback=_version_callback,
@@ -69,15 +68,15 @@ def import_video(
     video_url: Annotated[str, typer.Argument(help="URL of the video to download and import.")],
     # Server / auth
     server: Annotated[
-        Optional[str],
+        str | None,
         typer.Option("--server", "-s", help="AVideo server URL (overrides AVIDEO_SERVER_URL)."),
     ] = None,
     user: Annotated[
-        Optional[str],
+        str | None,
         typer.Option("--user", "-u", help="AVideo username (overrides AVIDEO_USERNAME)."),
     ] = None,
     password: Annotated[
-        Optional[str],
+        str | None,
         typer.Option(
             "--password",
             "-p",
@@ -112,20 +111,20 @@ def import_video(
     ] = 0,
     # Metadata
     title: Annotated[
-        Optional[str],
+        str | None,
         typer.Option("--title", "-t", help="Video title (auto-detected from yt-dlp if omitted)."),
     ] = None,
     description: Annotated[
-        Optional[str],
+        str | None,
         typer.Option("--description", "-d", help="Video description."),
     ] = None,
     categories_id: Annotated[
-        Optional[int],
+        int | None,
         typer.Option("--categories-id", "-c", help="AVideo category ID."),
     ] = None,
     # Files / directories
     output_dir: Annotated[
-        Optional[Path],
+        Path | None,
         typer.Option("--output-dir", "-o", help="Directory for downloaded/encoded files."),
     ] = None,
     keep_files: Annotated[
@@ -142,7 +141,7 @@ def import_video(
     ] = False,
     # Misc
     env_file: Annotated[
-        Optional[Path],
+        Path | None,
         typer.Option("--env-file", help="Path to a .env configuration file."),
     ] = None,
     debug: Annotated[
@@ -185,7 +184,7 @@ def import_video(
         cfg.validate()
     except ValueError as exc:
         console.print(f"[red]Configuration error:[/red] {exc}")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from exc
 
     # Snap to the nearest supported resolution (only used for single-res fallback)
     actual_resolution = nearest_resolution(resolution) if resolution > 0 else 0
@@ -300,7 +299,6 @@ def import_video(
                 rpt.success(f"Encoded {len(mp4_files)} MP4 file(s)")
                 if mp4_files:
                     encoded_duration = probe_duration(mp4_files[-1], cfg.ffprobe_bin) or duration
-                upload_ext = "mp4"
                 upload_resolution = max(int(f.stem.rsplit("_", 1)[-1].rstrip("p")) for f in mp4_files) if mp4_files else res_cap
 
             else:  # hls
@@ -316,7 +314,6 @@ def import_video(
                 files_to_clean.append(hls_zip)
                 encoded_files = [hls_zip]
                 rpt.success(f"HLS ZIP → {hls_zip.name}")
-                upload_ext = "zip"
                 upload_resolution = res_cap
 
             # ----------------------------------------------------------
@@ -462,16 +459,16 @@ def import_video(
 
         except AVideoAPIError as exc:
             rpt.error(f"AVideo API error: {exc}")
-            raise typer.Exit(1)
+            raise typer.Exit(1) from exc
         except KeyboardInterrupt:
             rpt.warning("Interrupted by user.")
-            raise typer.Exit(130)
+            raise typer.Exit(130) from None
         except Exception as exc:
             rpt.error(f"Unexpected error: {exc}")
             if debug:
                 import traceback
                 traceback.print_exc()
-            raise typer.Exit(1)
+            raise typer.Exit(1) from exc
         finally:
             # ----------------------------------------------------------
             # Cleanup temp files unless --keep-files was specified

@@ -17,9 +17,10 @@ from __future__ import annotations
 import datetime
 import json
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any
 from urllib.parse import urljoin
 
 import httpx
@@ -241,7 +242,7 @@ class AVideoClient:
         categories_id: int = 0,
         description: str = "",
         download_url: str = "",
-        videos_id: Optional[int] = None,
+        videos_id: int | None = None,
     ) -> RegisterVideoResult:
         """Create or update a video record on AVideo.
 
@@ -298,7 +299,7 @@ class AVideoClient:
         description: str = "",
         download_url: str = "",
         chunk_size: int = CHUNK_SIZE,
-        progress_callback: Optional[UploadProgressCallback] = None,
+        progress_callback: UploadProgressCallback | None = None,
     ) -> dict[str, Any]:
         """Upload an encoded video file to AVideo via chunked PUT + final POST.
 
@@ -372,9 +373,9 @@ class AVideoClient:
         videos_id: int,
         video_id_hash: str,
         duration: float,
-        jpg_path: Optional[Path] = None,
-        gif_path: Optional[Path] = None,
-        webp_path: Optional[Path] = None,
+        jpg_path: Path | None = None,
+        gif_path: Path | None = None,
+        webp_path: Path | None = None,
     ) -> dict[str, Any]:
         """Upload JPG / GIF / WebP thumbnails to AVideo.
 

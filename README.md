@@ -144,9 +144,52 @@ mypy local_encoder
 ## Requirements
 
 * Python 3.11+
-* FFmpeg
-* FFprobe
-* yt-dlp
+* FFmpeg + FFprobe — see [External Tools](#external-tools) below
+
+> **yt-dlp** is a Python package and is installed automatically with `pip install -e .` — no manual setup needed.
+
+---
+
+## External Tools
+
+### FFmpeg and FFprobe
+
+The application resolves `ffmpeg` and `ffprobe` in this order:
+
+| Priority | Method | How |
+|---|---|---|
+| 1 | Bundled binaries | Place `ffmpeg` / `ffprobe` (or `.exe` on Windows) inside a `bin/` folder at the project root |
+| 2 | Environment variables | Set `FFMPEG_BIN` and `FFPROBE_BIN` in `.env` |
+| 3 | System PATH | Have `ffmpeg` and `ffprobe` available globally |
+
+**Option A — Standalone (recommended for portability):**
+
+```text
+Local-Encoder/
+└── bin/
+    ├── ffmpeg.exe     ← Windows
+    └── ffprobe.exe
+```
+
+Download static builds from [ffmpeg.org/download.html](https://ffmpeg.org/download.html) or [github.com/BtbN/FFmpeg-Builds](https://github.com/BtbN/FFmpeg-Builds).  
+Extract and copy only `ffmpeg` and `ffprobe` into the `bin/` folder — no install required.
+
+**Option B — Environment variable:**
+
+```bash
+# .env
+FFMPEG_BIN=C:/tools/ffmpeg/bin/ffmpeg.exe
+FFPROBE_BIN=C:/tools/ffmpeg/bin/ffprobe.exe
+```
+
+**Option C — System PATH:**
+
+Install FFmpeg via your package manager and verify:
+
+```bash
+ffmpeg -version
+ffprobe -version
+```
 
 ---
 

@@ -15,7 +15,6 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
 
 from dotenv import load_dotenv
 
@@ -51,7 +50,7 @@ class Config:
             raise ValueError("AVIDEO_PASSWORD is required (set via env var or --password flag)")
 
 
-def load_config(env_file: Optional[Path] = None) -> Config:
+def load_config(env_file: Path | None = None) -> Config:
     """Load configuration from a .env file and environment variables."""
     if env_file and env_file.exists():
         load_dotenv(env_file)

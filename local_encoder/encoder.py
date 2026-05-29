@@ -16,14 +16,13 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import re
 import secrets
 import shutil
 import subprocess
 import zipfile
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +54,7 @@ def encode_mp4(
     output_path: Path,
     resolution: int,
     ffmpeg_bin: str = "ffmpeg",
-    progress_callback: Optional[EncodeProgressCallback] = None,
+    progress_callback: EncodeProgressCallback | None = None,
 ) -> Path:
     """Re-encode *input_path* to H.264 MP4 at *resolution* pixels tall.
 
@@ -132,10 +131,10 @@ def encode_mp4(
 def encode_mp4_multi(
     input_path: Path,
     output_dir: Path,
-    resolutions: Optional[list[int]] = None,
+    resolutions: list[int] | None = None,
     ffmpeg_bin: str = "ffmpeg",
     ffprobe_bin: str = "ffprobe",
-    progress_callback: Optional[EncodeProgressCallback] = None,
+    progress_callback: EncodeProgressCallback | None = None,
 ) -> list[Path]:
     """Re-encode *input_path* to multiple H.264 MP4 files in a single FFmpeg pass.
 
@@ -448,12 +447,12 @@ def _probe_video_height(input_path: Path, ffprobe_bin: str = "ffprobe") -> int:
 def encode_hls(
     input_path: Path,
     output_dir: Path,
-    resolutions: Optional[list[int]] = None,
+    resolutions: list[int] | None = None,
     ffmpeg_bin: str = "ffmpeg",
     ffprobe_bin: str = "ffprobe",
     hls_time: int = 6,
     encrypt: bool = True,
-    progress_callback: Optional[EncodeProgressCallback] = None,
+    progress_callback: EncodeProgressCallback | None = None,
 ) -> Path:
     """Encode *input_path* to multi-resolution AES-128 HLS and return the ZIP path.
 
@@ -554,7 +553,7 @@ def encode_hls(
         output_m3u8 = res_dir / "index.m3u8"
         res_dirs.append((res, res_dir))
 
-        ts_pattern = str(res_dir / f"seg_%03d.ts")
+        ts_pattern = str(res_dir / "seg_%03d.ts")
         cmd_video += [
             "-force_key_frames", f"expr:gte(t,n_forced*{hls_time})",
             "-vf", f"scale=-2:{res}",

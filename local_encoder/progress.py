@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Optional
-
 from rich.console import Console
 from rich.progress import (
     BarColumn,
@@ -37,7 +35,7 @@ class ProgressReporter:
             transient=False,
             expand=True,
         )
-        self._task: Optional[TaskID] = None
+        self._task: TaskID | None = None
 
     # ------------------------------------------------------------------
     # Context manager
@@ -54,7 +52,7 @@ class ProgressReporter:
     # Stage helpers
     # ------------------------------------------------------------------
 
-    def _new_task(self, description: str, total: Optional[int] = None) -> None:
+    def _new_task(self, description: str, total: int | None = None) -> None:
         if self._task is not None:
             self._progress.remove_task(self._task)
         self._task = self._progress.add_task(description, total=total)
