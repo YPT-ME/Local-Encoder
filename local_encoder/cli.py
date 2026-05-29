@@ -346,7 +346,7 @@ def import_video(
                 ),
             ]:
                 try:
-                    fn()  # type: ignore[operator]
+                    fn()  # type: ignore[no-untyped-call]
                     rpt.info(f"  Thumbnail {label} created")
                 except Exception as exc:
                     rpt.warning(f"  Thumbnail {label} skipped: {exc}")

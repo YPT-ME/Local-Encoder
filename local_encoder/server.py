@@ -12,6 +12,7 @@ import logging
 import queue
 import threading
 import uuid
+from collections.abc import Callable, Generator
 from pathlib import Path
 from typing import Any
 
@@ -66,7 +67,7 @@ _worker_thread = threading.Thread(target=_worker, daemon=True, name="encode-work
 _worker_thread.start()
 
 
-def _enqueue(job_id: str, runner) -> None:
+def _enqueue(job_id: str, runner: Callable[[str], None]) -> None:
     """Register a job and push it onto the work queue."""
     msg_queue: queue.Queue[str | None] = queue.Queue()
     _jobs[job_id] = {
@@ -178,10 +179,10 @@ def list_categories(
 
 
 def _run_pipeline(
-    emit,
+    emit: Callable[[str, dict[str, Any]], None],
     raw_file: Path,
     work_dir: Path,
-    files_to_clean: list,
+    files_to_clean: list[Path],
     server_url: str,
     username: str,
     password: str,
@@ -192,7 +193,7 @@ def _run_pipeline(
     duration: float,
     fmt: str,
     resolutions: list[int],
-    cfg,
+    cfg: Config,
 ) -> None:
     """Encode and upload a local raw_file. Called from both import endpoints."""
     seek = min(duration * 0.25, 600.0) if duration > 0 else 5.0
@@ -290,7 +291,7 @@ def _run_pipeline(
         (lambda: extract_thumbnail_webp(raw_file, webp_file, seek, 3.0, cfg.ffmpeg_bin), "WebP"),
     ]:
         try:
-            fn()  # type: ignore[operator]
+            fn()  # type: ignore[no-untyped-call]
         except Exception as exc:
             emit("log", {"msg": f"Thumbnail {label} skipped: {exc}"})
 
@@ -319,7 +320,7 @@ def _run_pipeline(
                 file_res = upload_resolution
             file_ext = "zip" if enc_file.suffix == ".zip" else "mp4"
 
-            def on_upload(fname: str, sent: int, total: int, _idx=idx) -> None:
+            def on_upload(fname: str, sent: int, total: int, _idx: int = idx) -> None:
                 base_pct = _idx * 100 // total_files
                 file_pct = int(sent * 100 / total) if total else 0
                 overall = base_pct + file_pct // total_files
@@ -627,7 +628,7 @@ def job_progress(job_id: str) -> StreamingResponse:
 
     msg_queue = _jobs[job_id]["queue"]
 
-    def _generate():
+    def _generate() -> Generator[str, None, None]:
         yield ": connected\n\n"
         while True:
             try:

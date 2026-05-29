@@ -11,8 +11,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-import yt_dlp
-import yt_dlp.utils
+import yt_dlp  # type: ignore[import-untyped]
+import yt_dlp.utils  # type: ignore[import-untyped]
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +36,7 @@ def download_video(
     output_template = str(output_dir / f"{filename_stem}.%(ext)s")
     expected_mp4 = output_dir / f"{filename_stem}.mp4"
 
-    def _progress_hook(d: dict) -> None:
+    def _progress_hook(d: dict[str, Any]) -> None:
         if progress_callback is None:
             return
         status = d.get("status", "")
@@ -102,7 +102,7 @@ def download_video(
         opts: dict[str, Any] = {**base_opts, **strategy}
         logger.info("yt-dlp strategy %d/%d: format=%s", i, len(strategies), opts.get("format"))
         try:
-            with yt_dlp.YoutubeDL(opts) as ydl:  # type: ignore[arg-type]
+            with yt_dlp.YoutubeDL(opts) as ydl:
                 info = ydl.extract_info(url, download=True)
                 if info is None:
                     raise yt_dlp.utils.DownloadError("extract_info returned None")
@@ -132,6 +132,6 @@ def get_video_info(url: str) -> dict[str, Any]:
         "skip_download": True,
         "no_playlist": True,
     }
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:  # type: ignore[arg-type]
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(url, download=False)
     return dict(info) if info else {}

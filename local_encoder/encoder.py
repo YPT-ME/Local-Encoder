@@ -23,6 +23,7 @@ import subprocess
 import zipfile
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -430,7 +431,7 @@ def extract_thumbnail_webp(
 # ---------------------------------------------------------------------------
 
 
-def _probe_audio_tracks(input_path: Path, ffprobe_bin: str = "ffprobe") -> list[dict]:
+def _probe_audio_tracks(input_path: Path, ffprobe_bin: str = "ffprobe") -> list[dict[str, Any]]:
     """Return a list of audio-track dicts with keys index, language, title.
 
     Mirrors HLSProcessor::getAudioTracks().
@@ -544,7 +545,7 @@ def encode_hls(
     # ------------------------------------------------------------------
     audio_tracks_dir = work_dir / "audio_tracks"
     audio_tracks_dir.mkdir(exist_ok=True)
-    valid_audio_tracks: list[dict] = []
+    valid_audio_tracks: list[dict[str, Any]] = []
 
     for track in audio_tracks:
         lang_safe = re.sub(r"[^a-z0-9_\-]", "", track["language"], flags=re.IGNORECASE)
