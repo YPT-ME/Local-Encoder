@@ -14,9 +14,8 @@ The application downloads videos from external platforms, processes them with FF
 
 ## Screenshots
 
-### Real-time encoding dashboard
+<img width="958" height="548" alt="chrome-capture-2026-05-29 (1)" src="https://github.com/user-attachments/assets/ad9b7e29-2e23-4f40-b3ad-1681af772221" />
 
-*Add screenshots or GIFs here*
 
 ---
 
