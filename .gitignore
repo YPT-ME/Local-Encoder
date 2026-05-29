@@ -3,3 +3,4 @@ local_encoder/__pycache__/*
 tests/__pycache__/*
 output/*
 local_encoder/static/vendor/*
+.coverage
