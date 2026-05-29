@@ -1,0 +1,445 @@
+﻿<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>AVideo Local Encoder</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+  tailwind.config = {
+    darkMode: 'class',
+    theme: { extend: { colors: { brand: { DEFAULT: '#4a7cff', dark: '#2d5ce0' } } } }
+  }
+</script>
+<script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<style>
+  body { background: #0f1117; }
+  .log-scroll::-webkit-scrollbar { width: 6px; }
+  .log-scroll::-webkit-scrollbar-track { background: transparent; }
+  .log-scroll::-webkit-scrollbar-thumb { background: #334; border-radius: 3px; }
+</style>
+</head>
+<body class="text-slate-200 min-h-screen">
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useRef, useCallback, useEffect } = React;
+
+const cls = (...a) => a.filter(Boolean).join(' ');
+
+function useLocalStorage(key, initial) {
+  const [val, setVal] = useState(() => {
+    try {
+      const s = localStorage.getItem(key);
+      return s !== null ? JSON.parse(s) : initial;
+    } catch { return initial; }
+  });
+  const set = useCallback(v => {
+    setVal(v);
+    try { localStorage.setItem(key, JSON.stringify(v)); } catch {}
+  }, [key]);
+  return [val, set];
+}
+
+function Input({ label, type = 'text', value, onChange, placeholder, className = '' }) {
+  return (
+    <label className="block">
+      {label && <span className="text-xs text-slate-400 mb-1 block">{label}</span>}
+      <input type={type} value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder}
+        className={cls('w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-100',
+          'focus:outline-none focus:border-brand focus:ring-1 focus:ring-brand transition', className)} />
+    </label>
+  );
+}
+
+function Select({ label, value, onChange, options }) {
+  return (
+    <label className="block">
+      {label && <span className="text-xs text-slate-400 mb-1 block">{label}</span>}
+      <select value={value} onChange={e => onChange(e.target.value)}
+        className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-brand transition">
+        {options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+      </select>
+    </label>
+  );
+}
+
+function Btn({ children, onClick, disabled, variant = 'primary', size = 'md' }) {
+  const base = 'rounded-lg font-semibold transition disabled:opacity-40 disabled:cursor-not-allowed';
+  const sz = { sm: 'px-3 py-1.5 text-xs', md: 'px-4 py-2 text-sm', lg: 'px-6 py-2.5 text-base' }[size];
+  const v = { primary: 'bg-brand hover:bg-brand-dark text-white', success: 'bg-emerald-600 hover:bg-emerald-500 text-white', ghost: 'bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200' }[variant];
+  return <button onClick={onClick} disabled={disabled} className={cls(base, sz, v)}>{children}</button>;
+}
+
+function Card({ children, className = '' }) {
+  return <div className={cls('rounded-xl border border-slate-800 bg-slate-900/60 p-5', className)}>{children}</div>;
+}
+
+function StepRow({ label, pct, color }) {
+  return (
+    <div className="flex items-center gap-3">
+      <span className="w-20 shrink-0 text-xs text-slate-400">{label}</span>
+      <div className="flex-1 h-1.5 rounded-full bg-slate-800 overflow-hidden">
+        <div className={cls('h-full rounded-full transition-all duration-300', color)} style={{ width: pct + '%' }} />
+      </div>
+      <span className="w-8 text-right text-xs text-slate-500">{pct}%</span>
+    </div>
+  );
+}
+
+function Badge({ ok, text }) {
+  if (text === null) return null;
+  return <span className={cls('inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-bold', ok ? 'bg-emerald-900/60 text-emerald-400' : 'bg-red-900/60 text-red-400')}>{ok ? '✓' : '✗'} {text}</span>;
+}
+
+function LogScroll({ logs }) {
+  const ref = useRef(null);
+  useEffect(() => { if (ref.current) ref.current.scrollTop = ref.current.scrollHeight; }, [logs]);
+  return (
+    <div ref={ref} className="log-scroll bg-slate-950 rounded-lg p-3 h-36 overflow-y-auto font-mono text-xs text-slate-400 space-y-0.5">
+      {logs.map((l, i) => <div key={i}>{l}</div>)}
+    </div>
+  );
+}
+
+const TABS = ['URL', 'File Upload'];
+
+function App() {
+  const [serverUrl, setServerUrl] = useLocalStorage('ave_server_url', '');
+  const [username, setUsername]   = useLocalStorage('ave_username', '');
+  const [password, setPassword]   = useLocalStorage('ave_password', '');
+  const [sslVerify, setSslVerify] = useLocalStorage('ave_ssl_verify', true);
+  const [connStatus, setConnStatus] = useState(null);
+  const [testing, setTesting] = useState(false);
+  const [categories, setCategories] = useState([]);
+  const [catsLoaded, setCatsLoaded] = useState(false);
+
+  const [tab, setTab]             = useLocalStorage('ave_tab', 'URL');
+  const [videoUrl, setVideoUrl]   = useState('');
+  const [localFile, setLocalFile] = useState(null);
+  const [vidTitle, setVidTitle]   = useState('');
+  const [vidDesc, setVidDesc]     = useState('');
+  const [catId, setCatId]         = useLocalStorage('ave_cat_id', '0');
+  const [format, setFormat]       = useLocalStorage('ave_format', 'auto');
+  // resolutions: stored as JSON-encoded int array, e.g. [360, 720]
+  const [resolutionsRaw, setResolutionsRaw] = useLocalStorage('ave_resolutions', '[]');
+  const resolutions = (() => { try { return JSON.parse(resolutionsRaw); } catch { return []; } })();
+  const setResolutions = arr => setResolutionsRaw(JSON.stringify(arr));
+  function toggleResolution(r) {
+    setResolutions(resolutions.includes(r) ? resolutions.filter(x => x !== r) : [...resolutions, r].sort((a,b)=>a-b));
+  }
+
+
+  // Job queue state: array of { job_id, status, title, thumbnail, pct, logs, doneInfo, jobError, videoInfo }
+  const [jobQueue, setJobQueue] = useState([]);
+  const openSseRefs = useRef({});  // job_id -> EventSource
+
+  function updateJob(job_id, patch) {
+    setJobQueue(prev => prev.map(j => j.job_id === job_id ? { ...j, ...patch } : j));
+  }
+
+  function openSseForJob(job_id) {
+    if (openSseRefs.current[job_id]) return;
+    const es = new EventSource(`/api/import/${job_id}/progress`);
+    openSseRefs.current[job_id] = es;
+    const appendJobLog = msg => {
+      const now = new Date().toLocaleTimeString();
+      setJobQueue(prev => prev.map(j => j.job_id === job_id
+        ? { ...j, logs: [...(j.logs || []), `[${now}] ${msg}`] } : j));
+    };
+    es.addEventListener('log', e => appendJobLog(JSON.parse(e.data).msg));
+    es.addEventListener('info', e => {
+      const d = JSON.parse(e.data);
+      setJobQueue(prev => prev.map(j => j.job_id === job_id
+        ? { ...j, videoInfo: { ...(j.videoInfo || {}), ...d }, title: d.title || j.title, thumbnail: d.thumbnail || j.thumbnail }
+        : j));
+    });
+    es.addEventListener('progress', e => {
+      const d = JSON.parse(e.data);
+      setJobQueue(prev => prev.map(j => j.job_id === job_id
+        ? { ...j, pct: { ...(j.pct || {}), [d.step]: d.pct } } : j));
+      appendJobLog(d.msg);
+    });
+    es.addEventListener('done', e => {
+      const d = JSON.parse(e.data);
+      updateJob(job_id, { status: 'done', doneInfo: d, pct: { download: 100, encode: 100, upload: 100 } });
+      es.close(); delete openSseRefs.current[job_id];
+    });
+    es.addEventListener('error', e => {
+      if (e.data) updateJob(job_id, { status: 'error', jobError: JSON.parse(e.data).msg });
+      es.close(); delete openSseRefs.current[job_id];
+    });
+    es.onerror = () => { es.close(); delete openSseRefs.current[job_id]; };
+  }
+
+  // Poll /api/jobs every 2s to pick up status changes (pending → running) and reconnect SSE
+  useEffect(() => {
+    const poll = setInterval(async () => {
+      try {
+        const res = await fetch('/api/jobs');
+        if (!res.ok) return;
+        const jobs = await res.json();
+        // Update status of existing items in queue
+        setJobQueue(prev => prev.map(j => {
+          const srv = jobs.find(x => x.job_id === j.job_id);
+          if (!srv) return j;
+          const updated = { ...j, status: srv.status };
+          if (srv.title && !j.title) updated.title = srv.title;
+          return updated;
+        }));
+        // Open SSE for any job that is now running and doesn't have an open SSE
+        jobs.filter(j => j.status === 'running').forEach(j => openSseForJob(j.job_id));
+      } catch (_) {}
+    }, 2000);
+    return () => clearInterval(poll);
+  }, []);
+
+  async function testConnection() {
+    setTesting(true); setConnStatus(null); setCatsLoaded(false); setCategories([]);
+    try {
+      const res = await fetch('/api/test-connection', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ server_url: serverUrl, username, password, ssl_verify: sslVerify }),
+      });
+      const data = await res.json();
+      if (data.ok) {
+        setConnStatus({ ok: true, text: data.name || 'Connected' });
+        fetchCategories();
+      } else {
+        setConnStatus({ ok: false, text: data.error || 'Failed' });
+      }
+    } catch (e) { setConnStatus({ ok: false, text: 'Network error' }); }
+    finally { setTesting(false); }
+  }
+
+  async function fetchCategories() {
+    const p = new URLSearchParams({ server_url: serverUrl, username, password, ssl_verify: sslVerify });
+    try {
+      const res = await fetch('/api/categories?' + p);
+      if (!res.ok) throw new Error(await res.text());
+      const cats = await res.json();
+      setCategories(cats);
+      if (cats.length > 0) setCatId(String(cats[0].id));
+    } catch (e) { /* silently ignore, form still works */ }
+    finally { setCatsLoaded(true); }
+  }
+
+  async function startImport() {
+    let res;
+    try {
+      if (tab === 'URL') {
+        res = await fetch('/api/import', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url: videoUrl, server_url: serverUrl, username, password, ssl_verify: sslVerify,
+            categories_id: parseInt(catId) || 0, title: vidTitle, description: vidDesc,
+            format, resolutions }),
+        });
+      } else {
+        const fd = new FormData();
+        fd.append('file', localFile);
+        [['server_url', serverUrl],['username', username],['password', password],
+         ['ssl_verify', sslVerify],['categories_id', catId],['title', vidTitle],
+         ['description', vidDesc],['format', format],['resolution', resolutions.join(',')]
+        ].forEach(([k,v]) => fd.append(k, v));
+        res = await fetch('/api/import-file', { method: 'POST', body: fd });
+      }
+      const data = await res.json();
+      const jid = data.job_id;
+      const label = vidTitle || (tab === 'URL' ? videoUrl : localFile?.name) || jid;
+      // Add to local queue state immediately
+      setJobQueue(prev => [...prev, {
+        job_id: jid, status: 'pending', title: label.slice(0, 80),
+        thumbnail: '', pct: { download: 0, encode: 0, upload: 0 },
+        logs: [], doneInfo: null, jobError: null, videoInfo: null,
+      }]);
+      // Reset form input but keep settings
+      if (tab === 'URL') setVideoUrl('');
+      else setLocalFile(null);
+      setVidTitle(''); setVidDesc('');
+    } catch (e) { alert('Submit error: ' + e.message); }
+  }
+
+  const connOk = connStatus?.ok === true;
+  const canImport = connOk && (tab === 'URL' ? videoUrl.trim() : !!localFile);
+
+  const catOptions = [
+    { value: '0', label: '— none —' },
+    ...categories.map(c => ({ value: String(c.id), label: c.name })),
+  ];
+
+  return (
+    <div className="mx-auto max-w-2xl px-4 py-10 space-y-5">
+      <h1 className="text-2xl font-bold text-brand">AVideo Local Encoder</h1>
+
+      <Card>
+        <h2 className="text-sm font-semibold text-slate-300 mb-4">AVideo Server</h2>
+        <div className="space-y-3">
+          <Input label="Server URL" type="url" value={serverUrl} onChange={setServerUrl} placeholder="https://your-avideo.example.com/" />
+          <div className="grid grid-cols-2 gap-3">
+            <Input label="Username" value={username} onChange={setUsername} placeholder="admin" />
+            <Input label="Password" type="password" value={password} onChange={setPassword} placeholder="••••••" />
+          </div>
+          <label className="flex items-center gap-2 text-xs text-slate-400 cursor-pointer select-none">
+            <input type="checkbox" checked={sslVerify} onChange={e => setSslVerify(e.target.checked)} className="accent-brand" />
+            Verify SSL certificate
+          </label>
+          <div className="flex items-center gap-3 pt-1">
+            <Btn onClick={testConnection} disabled={testing || !serverUrl || !username} size="sm">
+              {testing ? 'Testing…' : 'Test Connection'}
+            </Btn>
+            {connStatus && <Badge ok={connStatus.ok} text={connStatus.text} />}
+          </div>
+        </div>
+      </Card>
+
+      <Card>
+        <h2 className="text-sm font-semibold text-slate-300 mb-4">Import Video</h2>
+        <div className="flex gap-1 mb-4 rounded-lg bg-slate-800/60 p-1 w-fit">
+          {TABS.map(t => (
+            <button key={t} onClick={() => setTab(t)}
+              className={cls('rounded-md px-4 py-1.5 text-xs font-semibold transition',
+                tab === t ? 'bg-brand text-white shadow' : 'text-slate-400 hover:text-slate-200')}>
+              {t}
+            </button>
+          ))}
+        </div>
+        <div className="space-y-3">
+          {tab === 'URL' ? (
+            <Input label="Video URL" type="url" value={videoUrl} onChange={setVideoUrl} placeholder="https://www.youtube.com/watch?v=…" />
+          ) : (
+            <label className="block">
+              <span className="text-xs text-slate-400 mb-1 block">Local video file</span>
+              <div onClick={() => document.getElementById('file-input').click()}
+                className={cls('flex flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed cursor-pointer py-8 text-sm transition',
+                  localFile ? 'border-emerald-600 text-emerald-400 bg-emerald-950/20' : 'border-slate-700 text-slate-400 hover:border-brand bg-slate-900')}>
+                {localFile ? (
+                  <><span className="text-2xl">🎬</span><span className="font-medium">{localFile.name}</span><span className="text-xs text-slate-500">{(localFile.size/1048576).toFixed(1)} MiB</span></>
+                ) : (
+                  <><span className="text-2xl">📂</span><span>Click to select a video file</span><span className="text-xs text-slate-500">MP4, MKV, MOV, AVI, WebM…</span></>
+                )}
+              </div>
+              <input id="file-input" type="file" accept="video/*,.mkv,.avi,.mov,.flv,.webm,.mp4" className="hidden"
+                onChange={e => { const f = e.target.files?.[0]; if (f) { setLocalFile(f); if (!vidTitle) setVidTitle(f.name.replace(/\.[^.]+$/,'')); } }} />
+            </label>
+          )}
+          <Input label="Title (optional)" value={vidTitle} onChange={setVidTitle} placeholder="Auto-detected from URL / filename" />
+          <label className="block">
+            <span className="text-xs text-slate-400 mb-1 block">Description (optional)</span>
+            <textarea value={vidDesc} onChange={e => setVidDesc(e.target.value)} placeholder="Optional description…" rows={2}
+              className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-brand focus:ring-1 focus:ring-brand transition resize-none" />
+          </label>
+          <div className="grid grid-cols-2 gap-3">
+            <Select label="Category" value={catId} onChange={setCatId}
+              options={catsLoaded ? catOptions : [{ value: '0', label: connOk ? 'Loading\u2026' : '\u2014 connect first \u2014' }]} />
+            <Select label="Format" value={format} onChange={setFormat}
+              options={[{ value:'auto',label:'Auto'},{ value:'mp4',label:'MP4'},{ value:'hls',label:'HLS'}]} />
+          </div>
+          <div>
+            <span className="text-xs text-slate-400 mb-2 block">Resolutions <span className="text-slate-500">(empty = all)</span></span>
+            <div className="flex flex-wrap gap-2">
+              {[240,360,480,540,720,1080,1440,2160].map(r => (
+                <label key={r} className={cls(
+                  'flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold cursor-pointer border transition select-none',
+                  resolutions.includes(r)
+                    ? 'bg-brand/20 border-brand text-brand'
+                    : 'bg-slate-800 border-slate-700 text-slate-400 hover:border-slate-500'
+                )}>
+                  <input type="checkbox" className="hidden" checked={resolutions.includes(r)} onChange={() => toggleResolution(r)} />
+                  {r >= 2160 ? '4K' : r+'p'}
+                </label>
+              ))}
+            </div>
+          </div>
+          {!connOk && <p className="text-xs text-amber-400">⚠ Test the server connection before importing.</p>}
+          <div className="pt-1">
+            <Btn variant="success" onClick={startImport} disabled={!canImport}>
+              Add to Queue
+            </Btn>
+          </div>
+        </div>
+      </Card>
+
+      {jobQueue.length > 0 && (
+        <Card>
+          <h2 className="text-sm font-semibold text-slate-300 mb-4">Queue ({jobQueue.length})</h2>
+          <div className="space-y-4">
+            {jobQueue.map((job, idx) => {
+              const pct = job.pct || { download: 0, encode: 0, upload: 0 };
+              const statusIcon = job.status === 'pending' ? `#${idx+1}`
+                : job.status === 'running' ? '⏳'
+                : job.status === 'done' ? '✓'
+                : '✗';
+              const statusColor = job.status === 'done' ? 'text-emerald-400'
+                : job.status === 'error' ? 'text-red-400'
+                : job.status === 'running' ? 'text-amber-400'
+                : 'text-slate-500';
+              return (
+                <div key={job.job_id} className="rounded-lg border border-slate-700 bg-slate-800/40 p-3 space-y-2">
+                  {/* Header row */}
+                  <div className="flex items-start gap-2">
+                    <span className={cls('text-xs font-bold mt-0.5 shrink-0 w-6 text-center', statusColor)}>{statusIcon}</span>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-slate-100 truncate">{job.title || job.job_id}</p>
+                      <span className={cls('text-xs capitalize', statusColor)}>{job.status}</span>
+                    </div>
+                    {job.thumbnail && (
+                      <img src={job.thumbnail} alt="" className="w-14 h-10 rounded object-cover shrink-0 bg-slate-700" />
+                    )}
+                  </div>
+
+                  {/* Video info (running/done) */}
+                  {job.videoInfo && (job.status === 'running' || job.status === 'done') && (
+                    <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-slate-400 pl-8">
+                      {job.videoInfo.uploader && <span>📺 {job.videoInfo.uploader}</span>}
+                      {job.videoInfo.duration_s > 0 && (
+                        <span>⏱ {Math.floor(job.videoInfo.duration_s/3600) > 0 ? `${Math.floor(job.videoInfo.duration_s/3600)}h ` : ''}{Math.floor((job.videoInfo.duration_s%3600)/60)}m {job.videoInfo.duration_s%60}s</span>
+                      )}
+                      {job.videoInfo.file_size_bytes > 0 && (
+                        <span>💾 {job.videoInfo.file_size_bytes >= 1_073_741_824
+                          ? (job.videoInfo.file_size_bytes/1_073_741_824).toFixed(2)+' GiB'
+                          : (job.videoInfo.file_size_bytes/1_048_576).toFixed(1)+' MiB'}</span>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Progress bars (running only) */}
+                  {job.status === 'running' && (
+                    <div className="space-y-1.5 pl-8">
+                      <StepRow label="Download" pct={pct.download} color="bg-brand" />
+                      <StepRow label="Encode"   pct={pct.encode}   color="bg-amber-500" />
+                      <StepRow label="Upload"   pct={pct.upload}   color="bg-emerald-500" />
+                    </div>
+                  )}
+
+                  {/* Log (running) */}
+                  {job.status === 'running' && job.logs && job.logs.length > 0 && (
+                    <LogScroll logs={job.logs} />
+                  )}
+
+                  {/* Done banner */}
+                  {job.status === 'done' && job.doneInfo && (
+                    <div className="pl-8 text-xs text-emerald-400">
+                      ✓ videos_id: <strong>{job.doneInfo.videos_id}</strong>{' '}
+                      <a href={job.doneInfo.url} target="_blank" rel="noreferrer" className="underline hover:text-emerald-300">View →</a>
+                    </div>
+                  )}
+
+                  {/* Error banner */}
+                  {job.status === 'error' && job.jobError && (
+                    <div className="pl-8 text-xs text-red-400">✗ {job.jobError}</div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </Card>
+      )}
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>

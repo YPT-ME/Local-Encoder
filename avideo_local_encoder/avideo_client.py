@@ -206,6 +206,32 @@ class AVideoClient:
             disable_mp4=bool(data.get("doNotShowEncoderAutomaticMP4")),
         )
 
+    def get_categories(self) -> list[dict[str, Any]]:
+        """Return list of video categories from AVideo.
+
+        Each item has at minimum: ``id`` (int) and ``name`` (str).
+        Falls back to an empty list on failure.
+        """
+        url = self._url("objects/categories.json.php")
+        try:
+            resp = self._http.get(url, timeout=15)
+            resp.raise_for_status()
+            data = resp.json()
+            # AVideo returns {"rows": [...], "total": N} from objects/categories.json.php
+            # or a bare list, or {"response": [...]}
+            if isinstance(data, list):
+                items = data
+            else:
+                items = data.get("rows") or data.get("response") or data.get("categories") or []
+            return [
+                {"id": int(c.get("id", 0)), "name": str(c.get("name", ""))}
+                for c in items
+                if c.get("id") and c.get("name")
+            ]
+        except Exception as exc:
+            logger.warning("Could not fetch categories (%s)", exc)
+            return []
+
     def register_video(
         self,
         title: str,

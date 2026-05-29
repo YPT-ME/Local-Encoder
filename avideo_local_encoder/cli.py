@@ -457,7 +457,7 @@ def import_video(
                     rpt.warning(f"Notify-done error: {done_result.get('msg', 'unknown')}")
                 else:
                     rpt.success(
-                        f"Done! Video is live: {cfg.server_url}video?v={reg.videos_id}"
+                        f"Done! Video is live: {cfg.server_url}video/{reg.videos_id}"
                     )
 
         except AVideoAPIError as exc:
@@ -489,3 +489,27 @@ def import_video(
                         shutil.rmtree(work_dir, ignore_errors=True)
                 except OSError:
                     pass
+
+
+@app.command("serve")
+def serve(
+    host: str = typer.Option("127.0.0.1", help="Bind host"),
+    port: int = typer.Option(8000, help="Bind port"),
+    no_browser: bool = typer.Option(False, "--no-browser", help="Do not open a browser tab"),
+) -> None:
+    """Start the web UI (FastAPI + uvicorn)."""
+    import webbrowser
+
+    import uvicorn
+
+    from avideo_local_encoder.server import app as fastapi_app
+
+    url = f"http://{host}:{port}"
+    typer.echo(f"Starting web UI at {url}")
+    if not no_browser:
+        # Open after a short delay so the server is ready
+        import threading
+        threading.Timer(1.0, lambda: webbrowser.open(url)).start()
+
+    uvicorn.run(fastapi_app, host=host, port=port)
+
