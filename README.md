@@ -1,6 +1,10 @@
 # Local Encoder
 
 [![CI](https://github.com/YPT-ME/Local-Encoder/actions/workflows/ci.yml/badge.svg)](https://github.com/YPT-ME/Local-Encoder/actions/workflows/ci.yml)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue?logo=python&logoColor=white)](https://www.python.org/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
+[![Checked with mypy](https://img.shields.io/badge/mypy-strict-blue)](https://mypy-lang.org/)
 
 Production-style video ingestion and transcoding pipeline built with Python.
 
@@ -92,8 +96,8 @@ The project was inspired by real media platform workflows and encoding pipelines
 ## Quick Start
 
 ```bash
-git clone https://github.com/your-username/local-encoder
-cd local-encoder
+git clone https://github.com/YPT-ME/Local-Encoder
+cd Local-Encoder
 
 python -m venv .venv
 source .venv/bin/activate
