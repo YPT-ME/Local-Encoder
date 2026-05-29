@@ -55,6 +55,7 @@ def _worker() -> None:
         if job is None:
             continue
         job["status"] = "running"
+        job["queue"].put(f'event: status\ndata: {json.dumps({"status": "running"})}\n\n')
         try:
             job["runner"](job_id)
         except Exception as exc:
@@ -630,6 +631,9 @@ def job_progress(job_id: str) -> StreamingResponse:
 
     def _generate() -> Generator[str, None, None]:
         yield ": connected\n\n"
+        # Send current status immediately so the client knows if job is pending
+        current_status = _jobs[job_id].get("status", "pending")
+        yield f'event: status\ndata: {json.dumps({"status": current_status})}\n\n'
         while True:
             try:
                 msg = msg_queue.get(timeout=30)

@@ -193,6 +193,10 @@ function App() {
         ? { ...j, pct: { ...(j.pct || {}), [d.step]: d.pct } } : j));
       appendJobLog(d.msg);
     });
+    es.addEventListener('status', e => {
+      const d = JSON.parse(e.data);
+      updateJob(job_id, { status: d.status });
+    });
     es.addEventListener('done', e => {
       const d = JSON.parse(e.data);
       updateJob(job_id, { status: 'done', doneInfo: d, pct: { download: 100, encode: 100, upload: 100 } });
@@ -204,28 +208,6 @@ function App() {
     });
     es.onerror = () => { es.close(); delete openSseRefs.current[job_id]; };
   }
-
-  // Poll /api/jobs every 2s to pick up status changes (pending → running) and reconnect SSE
-  useEffect(() => {
-    const poll = setInterval(async () => {
-      try {
-        const res = await fetch('/api/jobs');
-        if (!res.ok) return;
-        const jobs = await res.json();
-        // Update status of existing items in queue
-        setJobQueue(prev => prev.map(j => {
-          const srv = jobs.find(x => x.job_id === j.job_id);
-          if (!srv) return j;
-          const updated = { ...j, status: srv.status };
-          if (srv.title && !j.title) updated.title = srv.title;
-          return updated;
-        }));
-        // Open SSE for any job that is now running and doesn't have an open SSE
-        jobs.filter(j => j.status === 'running').forEach(j => openSseForJob(j.job_id));
-      } catch (_) {}
-    }, 2000);
-    return () => clearInterval(poll);
-  }, []);
 
   // Auto-test connection on mount if credentials are already saved
   useEffect(() => {
@@ -290,12 +272,13 @@ function App() {
       const data = await res.json();
       const jid = data.job_id;
       const label = vidTitle || (tab === 'URL' ? videoUrl : localFile?.name) || jid;
-      // Add to local queue state immediately
+      // Add to local queue state and immediately open SSE (no polling needed)
       setJobQueue(prev => [...prev, {
         job_id: jid, status: 'pending', title: label.slice(0, 80),
         thumbnail: '', pct: { download: 0, encode: 0, upload: 0 },
         logs: [], doneInfo: null, jobError: null, videoInfo: null,
       }]);
+      openSseForJob(jid);
       // Reset form input but keep settings
       if (tab === 'URL') setVideoUrl('');
       else setLocalFile(null);
