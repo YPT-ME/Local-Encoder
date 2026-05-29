@@ -41,9 +41,18 @@ def download_video(
             return
         status = d.get("status", "")
         if status == "downloading":
-            downloaded = int(d.get("downloaded_bytes") or 0)
-            total = int(d.get("total_bytes") or d.get("total_bytes_estimate") or 0)
-            progress_callback("downloading", downloaded, total)
+            # For fragmented/DASH/HLS streams, fragment_index/fragment_count are
+            # more reliable than total_bytes_estimate (which often over-estimates
+            # by counting both video and audio streams, capping apparent progress
+            # at ~50%).
+            fragment_index: int | None = d.get("fragment_index")
+            fragment_count: int | None = d.get("fragment_count")
+            if fragment_index is not None and fragment_count:
+                progress_callback("downloading", fragment_index, fragment_count)
+            else:
+                downloaded = int(d.get("downloaded_bytes") or 0)
+                total = int(d.get("total_bytes") or d.get("total_bytes_estimate") or 0)
+                progress_callback("downloading", downloaded, total)
         elif status == "finished":
             total = int(d.get("total_bytes") or d.get("downloaded_bytes") or 0)
             progress_callback("finished", total, total)
