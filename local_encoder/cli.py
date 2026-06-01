@@ -18,6 +18,7 @@ from typing import Annotated
 import typer
 
 from local_encoder import __version__
+from local_encoder import history as _history
 from local_encoder.avideo_client import AVideoAPIError, AVideoClient
 from local_encoder.config import load_config
 from local_encoder.downloader import download_video, get_video_info
@@ -200,6 +201,8 @@ def import_video(
     work_dir = cfg.output_dir
     work_dir.mkdir(parents=True, exist_ok=True)
 
+    hist_entry = _history.new_entry(video_url, cfg.server_url, cfg.username)
+
     with ProgressReporter(verbose=debug) as rpt:
         files_to_clean: list[Path] = []
 
@@ -218,6 +221,9 @@ def import_video(
             video_description = description or info.get("description") or ""
             meta_duration = float(info.get("duration") or 0)
             filename_stem = sanitize_filename(video_title)[:80]
+
+            hist_entry.title = video_title
+            _history.update_entry(hist_entry)
 
             rpt.info(f"Title: {video_title}")
 
@@ -417,6 +423,8 @@ def import_video(
                     if upload_result.get("msg"):
                         rpt.info(f"  Server: {upload_result['msg']}")
 
+                hist_entry.videos_id = reg.videos_id
+
                 # 5c-ii. Auto-extract and upload MP3 if server config requires it
                 if server_cfg.auto_convert_to_mp3 and resolved_fmt != "hls":
                     mp3_file = work_dir / f"{filename_stem}.mp3"
@@ -465,13 +473,26 @@ def import_video(
                 else:
                     rpt.success(f"Done! Video is live: {cfg.server_url}video/{reg.videos_id}")
 
+                hist_entry.status = "success"
+                hist_entry.title = video_title
+                _history.update_entry(hist_entry)
+
         except AVideoAPIError as exc:
+            hist_entry.status = "failed"
+            hist_entry.error = str(exc)
+            _history.update_entry(hist_entry)
             rpt.error(f"AVideo API error: {exc}")
             raise typer.Exit(1) from exc
         except KeyboardInterrupt:
+            hist_entry.status = "failed"
+            hist_entry.error = "Interrupted"
+            _history.update_entry(hist_entry)
             rpt.warning("Interrupted by user.")
             raise typer.Exit(130) from None
         except Exception as exc:
+            hist_entry.status = "failed"
+            hist_entry.error = str(exc)
+            _history.update_entry(hist_entry)
             rpt.error(f"Unexpected error: {exc}")
             if debug:
                 import traceback
@@ -495,6 +516,59 @@ def import_video(
                         shutil.rmtree(work_dir, ignore_errors=True)
                 except OSError:
                     pass
+
+
+@app.command("logs")
+def show_logs(
+    server: Annotated[
+        str | None,
+        typer.Option("--server", "-s", help="Filter by AVideo server URL."),
+    ] = None,
+    user: Annotated[
+        str | None,
+        typer.Option("--user", "-u", help="Filter by username."),
+    ] = None,
+    limit: Annotated[
+        int,
+        typer.Option("--limit", "-n", help="Max entries to show (0 = all)."),
+    ] = 20,
+) -> None:
+    """Show the history of past import jobs."""
+    from rich.table import Table
+
+    entries = _history.list_entries(server=server, username=user)
+    if limit > 0:
+        entries = entries[:limit]
+
+    if not entries:
+        console.print("[yellow]No history found.[/yellow]")
+        raise typer.Exit()
+
+    table = Table(show_header=True, header_style="bold cyan")
+    table.add_column("#", style="dim", width=3)
+    table.add_column("Date", min_width=16)
+    table.add_column("Title", min_width=30, no_wrap=False)
+    table.add_column("Server", min_width=20)
+    table.add_column("User", min_width=10)
+    table.add_column("Status", width=8)
+    table.add_column("ID", width=6)
+
+    _STATUS_STYLE = {"success": "green", "failed": "red", "pending": "yellow"}
+
+    for idx, e in enumerate(entries, start=1):
+        style = _STATUS_STYLE.get(e.status, "white")
+        vid_id = str(e.videos_id) if e.videos_id else "—"
+        table.add_row(
+            str(idx),
+            e.display_time(),
+            e.title,
+            e.server,
+            e.username,
+            f"[{style}]{e.status}[/{style}]",
+            vid_id,
+        )
+
+    console.print(table)
 
 
 @app.command("serve")
