@@ -12,6 +12,10 @@ import logging
 import queue
 import threading
 import uuid
+
+from local_encoder.logging_setup import configure_logging
+
+configure_logging()
 from collections.abc import Callable, Generator
 from pathlib import Path
 from typing import Any

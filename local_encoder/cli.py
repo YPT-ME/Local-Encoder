@@ -19,6 +19,7 @@ import typer
 
 from local_encoder import __version__
 from local_encoder import history as _history
+from local_encoder.logging_setup import configure_logging
 from local_encoder.avideo_client import AVideoAPIError, AVideoClient
 from local_encoder.config import load_config
 from local_encoder.downloader import download_video, get_video_info
@@ -155,11 +156,11 @@ def import_video(
     # ------------------------------------------------------------------
     # Logging
     # ------------------------------------------------------------------
-    logging.basicConfig(
-        level=logging.DEBUG if debug else logging.WARNING,
-        format="%(levelname)s %(name)s: %(message)s",
-        stream=sys.stderr,
-    )
+    log_file = configure_logging(debug=debug, stream=sys.stderr)
+    if debug:
+        logging.getLogger().debug("Log file: %s", log_file)
+    else:
+        typer.echo(f"Logs: {log_file}")
 
     # ------------------------------------------------------------------
     # Load config, then override with CLI flags
