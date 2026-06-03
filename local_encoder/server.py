@@ -13,9 +13,6 @@ import queue
 import threading
 import uuid
 
-from local_encoder.logging_setup import configure_logging
-
-configure_logging()
 from collections.abc import Callable, Generator
 from pathlib import Path
 from typing import Any
@@ -37,8 +34,10 @@ from local_encoder.encoder import (
     extract_thumbnail_jpg,
     extract_thumbnail_webp,
 )
+from local_encoder.logging_setup import configure_logging
 from local_encoder.utils import probe_duration, sanitize_filename
 
+configure_logging()
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="AVideo Local Encoder", version="0.1.0")
