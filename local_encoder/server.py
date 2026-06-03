@@ -12,7 +12,6 @@ import logging
 import queue
 import threading
 import uuid
-
 from collections.abc import Callable, Generator
 from pathlib import Path
 from typing import Any

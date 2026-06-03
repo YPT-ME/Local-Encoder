@@ -46,7 +46,7 @@ class HistoryEntry:
         }
 
     @classmethod
-    def from_dict(cls, d: dict) -> "HistoryEntry":
+    def from_dict(cls, d: dict) -> HistoryEntry:
         return cls(
             id=d.get("id", ""),
             url=d.get("url", ""),
