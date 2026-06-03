@@ -19,7 +19,6 @@ import typer
 
 from local_encoder import __version__
 from local_encoder import history as _history
-from local_encoder.logging_setup import configure_logging
 from local_encoder.avideo_client import AVideoAPIError, AVideoClient
 from local_encoder.config import load_config
 from local_encoder.downloader import download_video, get_video_info
@@ -33,6 +32,7 @@ from local_encoder.encoder import (
     extract_thumbnail_webp,
     nearest_resolution,
 )
+from local_encoder.logging_setup import configure_logging
 from local_encoder.progress import ProgressReporter, console
 from local_encoder.utils import probe_duration, sanitize_filename
 
