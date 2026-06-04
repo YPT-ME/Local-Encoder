@@ -7,6 +7,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 _HISTORY_FILE = Path.home() / ".local" / "share" / "local-encoder" / "history.jsonl"
 
@@ -31,7 +32,7 @@ class HistoryEntry:
         except Exception:
             return self.created_at
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, object]:
         return {
             "id": self.id,
             "url": self.url,
@@ -46,7 +47,7 @@ class HistoryEntry:
         }
 
     @classmethod
-    def from_dict(cls, d: dict) -> HistoryEntry:
+    def from_dict(cls, d: dict[str, Any]) -> HistoryEntry:
         return cls(
             id=d.get("id", ""),
             url=d.get("url", ""),

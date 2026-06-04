@@ -14,6 +14,7 @@ from __future__ import annotations
 import logging
 import logging.handlers
 from pathlib import Path
+from typing import TextIO
 
 _LOG_DIR = Path.home() / ".local" / "share" / "local-encoder"
 _LOG_FILE = _LOG_DIR / "local-encoder.log"
@@ -25,7 +26,7 @@ _DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
 _configured = False
 
 
-def configure_logging(debug: bool = False, stream=None) -> Path:
+def configure_logging(debug: bool = False, stream: TextIO | None = None) -> Path:
     """Set up root logger with a rotating file handler + optional console handler.
 
     Parameters
