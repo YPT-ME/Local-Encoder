@@ -76,7 +76,5 @@ def configure_logging(debug: bool = False, stream=None) -> Path:
         root.addHandler(console_handler)
 
     _configured = True
-    logging.getLogger(__name__).info(
-        "Logging initialised – file: %s (debug=%s)", _LOG_FILE, debug
-    )
+    logging.getLogger(__name__).info("Logging initialised – file: %s (debug=%s)", _LOG_FILE, debug)
     return _LOG_FILE
