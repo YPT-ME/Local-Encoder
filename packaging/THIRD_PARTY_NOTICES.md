@@ -32,6 +32,15 @@ FFmpeg project. See https://ffmpeg.org/legal.html.
   distributed this version, we will provide the complete corresponding source code at no
   charge other than the cost of delivering it.
 
+## deno (JavaScript runtime)
+
+yt-dlp uses deno to solve the JavaScript challenges of some sites, such as YouTube. On Windows
+and Linux the unmodified official deno binary sits next to the Local Encoder program; on macOS
+it is stored inside it. deno is MIT licensed, Copyright the Deno authors; see
+`licenses/deno-LICENSE.md` and https://github.com/denoland/deno.
+
+{{DENO_BUILD_DETAILS}}
+
 ## Python and Python packages
 
 The executable contains a Python runtime (Python Software Foundation License,

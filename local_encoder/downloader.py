@@ -7,6 +7,7 @@ AVideo/.compose/encoder/objects/Encoder.php.
 from __future__ import annotations
 
 import logging
+import os
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -14,10 +15,29 @@ from typing import Any
 import yt_dlp  # type: ignore[import-untyped]
 import yt_dlp.utils  # type: ignore[import-untyped]
 
+from local_encoder._frozen import resolve_deno, resolve_ffmpeg
+
 logger = logging.getLogger(__name__)
 
 ProgressCallback = Callable[[str, int, int], None]
 """Called as ``callback(status, downloaded_bytes, total_bytes)``."""
+
+
+def _external_tools() -> dict[str, Any]:
+    """yt-dlp options pointing at the FFmpeg and deno shipped with the app.
+
+    The packaged app keeps them next to the executable (or inside it on macOS), not on PATH:
+    without ``ffmpeg_location`` yt-dlp cannot merge separate video/audio streams, and without a
+    JavaScript runtime YouTube formats go missing.
+    """
+    opts: dict[str, Any] = {}
+    ffmpeg = os.getenv("FFMPEG_BIN") or resolve_ffmpeg()
+    if Path(ffmpeg).is_file():  # a bare "ffmpeg" is looked up on PATH by yt-dlp itself
+        opts["ffmpeg_location"] = ffmpeg
+    deno = resolve_deno()
+    if deno:
+        opts["js_runtimes"] = {"deno": {"path": deno}}
+    return opts
 
 
 def download_video(
@@ -76,6 +96,7 @@ def download_video(
             "AppleWebKit/537.36 (KHTML, like Gecko) "
             "Chrome/122.0.0.0 Safari/537.36"
         ),
+        **_external_tools(),
     }
     if cookies_file and cookies_file.exists():
         base_opts["cookiefile"] = str(cookies_file)
@@ -140,6 +161,7 @@ def get_video_info(url: str) -> dict[str, Any]:
         "nocheckcertificate": True,
         "skip_download": True,
         "no_playlist": True,
+        **_external_tools(),
     }
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(url, download=False)

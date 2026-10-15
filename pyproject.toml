@@ -13,7 +13,9 @@ license = { text = "MIT" }
 dependencies = [
     "typer>=0.9",
     "httpx>=0.27",
-    "yt-dlp>=2024.1.0",
+    # [default] adds yt-dlp-ejs (YouTube challenge solver used with deno) and the optional
+    # downloaders/decrypters yt-dlp recommends
+    "yt-dlp[default]>=2024.1.0",
     "python-dotenv>=1.0",
     "rich>=13.0",
     "fastapi>=0.111",

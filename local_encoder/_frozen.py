@@ -42,3 +42,13 @@ def resolve_ffmpeg() -> str:
 def resolve_ffprobe() -> str:
     """Return path to bundled ffprobe, or 'ffprobe' if not bundled."""
     return _resolve("ffprobe", "FFPROBE_BIN")
+
+
+def resolve_deno() -> str | None:
+    """Return the bundled deno (``DENO_BIN`` first), or None to let yt-dlp search PATH.
+
+    yt-dlp needs a JavaScript runtime to solve YouTube's challenges; without one some formats
+    are missing (https://github.com/yt-dlp/yt-dlp/wiki/EJS).
+    """
+    resolved = _resolve("deno", "DENO_BIN")
+    return None if resolved == "deno" else resolved

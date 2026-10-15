@@ -14,6 +14,10 @@ READMEs.
 | `LocalEncoder-linux-x64.tar.gz` | `ubuntu-22.04` (older glibc, runs on more distros) | BtbN GPL build, next to the executable |
 | `LocalEncoder-linux-arm64.tar.gz` | `ubuntu-22.04-arm` | BtbN GPL build, next to the executable |
 | `ffmpeg-source-*` | — | FFmpeg source code matching the bundled builds (GPL) |
+
+Every package also contains the official **deno** binary (MIT, `scripts/fetch_deno.py`). yt-dlp
+uses it to solve YouTube's JavaScript challenges; without it, some formats are missing. Like
+FFmpeg, deno sits next to the executable on Windows/Linux and is embedded on macOS.
 | `SHA256SUMS.txt` | — | Checksums of all assets |
 
 Windows on ARM runs the x64 build through emulation, so it has no separate asset.
@@ -22,13 +26,20 @@ Windows on ARM runs the x64 build through emulation, so it has no separate asset
 
 [`.github/workflows/release.yml`](../.github/workflows/release.yml) runs these jobs in order:
 
-1. **version**: picks the version from the tag, from the workflow input, or as the next patch
-   after the latest release. It refuses a version that already exists.
+1. **version** (job *Decide version*): picks the version in this order:
+   - a pushed tag `vX.Y.Z`;
+   - the exact version typed in the *Run workflow* form;
+   - the next version after the latest release, using the *bump* field (`patch` by default,
+     `minor` or `major`): 1.2.3 becomes 1.2.4, 1.3.0 or 2.0.0;
+   - for the very first release, the version in `local_encoder/__init__.py`.
+
+   It refuses a version that already exists or is not `X.Y.Z`. The chosen version and the reason
+   appear at the top of the run page.
 2. **tests**: runs [`ci.yml`](../.github/workflows/ci.yml) (pytest, ruff, mypy) on that commit.
 3. **build** (one job per platform):
    1. stamps the version into `local_encoder/__init__.py` (`scripts/set_version.py`);
    2. installs the app with `packaging/build-constraints.txt`;
-   3. downloads the web UI libraries and FFmpeg (`scripts/fetch_ffmpeg.py`);
+   3. downloads the web UI libraries, FFmpeg (`scripts/fetch_ffmpeg.py`) and deno (`scripts/fetch_deno.py`);
    4. builds with PyInstaller (`local-encoder.spec`);
    5. smoke-tests the executable: `--version`, then `serve`, the page, `/api/version` and the vendored JS;
    6. packages it with `scripts/make_dist.py`.
@@ -40,7 +51,7 @@ Windows on ARM runs the x64 build through emulation, so it has no separate asset
 Ways to start it:
 
 - **Tag**: `git tag v1.2.3 && git push origin v1.2.3`.
-- **Button**: *Actions → Release → Run workflow*. Leave the version empty for the next patch version.
+- **Button**: *Actions → Release → Run workflow*. Leave the version empty and choose the increment (patch by default).
 - **Automatic**: [`.github/workflows/yt-dlp-update.yml`](../.github/workflows/yt-dlp-update.yml)
   runs every day at 06:17 UTC and compares PyPI's latest yt-dlp with
   `packaging/build-constraints.txt`.
@@ -60,22 +71,37 @@ release already exists or yt-dlp changes.
 pip install -e ".[build]"
 python scripts/download_vendor.py
 python scripts/fetch_ffmpeg.py windows-x64   # or linux-x64, linux-arm64, macos-arm64, macos-x64
+python scripts/fetch_deno.py windows-x64     # same platform names
 pyinstaller --noconfirm --clean local-encoder.spec
 python scripts/make_dist.py windows-x64      # → dist/LocalEncoder-windows-x64.zip
 ```
 
-PyInstaller cannot cross-compile, so build each platform on that platform. `bin/`, `build/` and
+PyInstaller cannot cross-compile, so build each platform on that platform. The Linux x64 build
+can be checked from any machine with Docker before pushing. Copy the repository into a
+`python:3.12` container and run the same steps as the workflow, with `PYTHONUTF8=1` and
+`GH_TOKEN`, ending with `--version`, the `serve` smoke test and `make_dist.py linux-x64`.
+
+`scripts/download_vendor.py` sends its own User-Agent, because `cdn.tailwindcss.com` answers 403
+to Python's default one. It also checks every file's SHA-256. When upgrading a library, update
+the URL and the hash together.
+
+Release builds start from a clean checkout, so they download everything again. A file that
+already exists in your local `static/vendor` or `bin` is skipped and can hide download problems:
+use `download_vendor.py --force` to reproduce a clean build. `bin/`, `build/` and
 `dist/` are gitignored.
 
-## Where the app finds FFmpeg (`local_encoder/_frozen.py`)
+## Where the app finds FFmpeg and deno (`local_encoder/_frozen.py`)
 
 The order is:
 
 1. the folder of the executable;
 2. its `bin/` subfolder;
 3. the PyInstaller bundle (macOS);
-4. `FFMPEG_BIN`/`FFPROBE_BIN`;
+4. `FFMPEG_BIN`/`FFPROBE_BIN`/`DENO_BIN`;
 5. `PATH`.
+
+`downloader._external_tools()` passes the FFmpeg and deno it finds to yt-dlp (`ffmpeg_location`,
+`js_runtimes`).
 
 On Windows and Linux FFmpeg is not embedded: the two GPL builds take about 330 MB, and an
 embedded copy would be extracted to a temp folder on every start. On macOS it is embedded, so

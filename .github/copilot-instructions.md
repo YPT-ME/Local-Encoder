@@ -53,7 +53,8 @@ session id in browser `localStorage` (never the password). Logs, history and the
 listens on `127.0.0.1:47800` (another free port if busy).
 
 Distribution: one-file PyInstaller executables for Windows, macOS (arm64 + Intel) and Linux
-(x64 + arm64), with a static GPL FFmpeg, published on GitHub Releases by
+(x64 + arm64), with a static GPL FFmpeg and deno (yt-dlp's JavaScript runtime for YouTube),
+published on GitHub Releases by
 `.github/workflows/release.yml`. A new release goes out automatically whenever yt-dlp updates
 (`.github/workflows/yt-dlp-update.yml`). See `docs/releasing.md` for the build, FFmpeg licensing
 (GPL notices + source attached to every release) and signing. Anything the running app needs must

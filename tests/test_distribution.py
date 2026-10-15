@@ -64,6 +64,40 @@ def test_ffmpeg_falls_back_to_env_then_path(monkeypatch: pytest.MonkeyPatch) -> 
     assert _frozen.resolve_ffmpeg() == "ffmpeg"
 
 
+def test_deno_is_optional(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(_frozen, "_bundle_dirs", lambda: [])
+    monkeypatch.delenv("DENO_BIN", raising=False)
+    assert _frozen.resolve_deno() is None  # yt-dlp then looks for deno on PATH itself
+
+
+def test_yt_dlp_gets_bundled_ffmpeg_and_deno(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from local_encoder import downloader
+
+    suffix = ".exe" if sys.platform == "win32" else ""
+    for tool in ("ffmpeg", "deno"):
+        (tmp_path / f"{tool}{suffix}").write_bytes(b"")
+    monkeypatch.setattr(_frozen, "_bundle_dirs", lambda: [tmp_path])
+    monkeypatch.delenv("FFMPEG_BIN", raising=False)
+    monkeypatch.delenv("DENO_BIN", raising=False)
+
+    opts = downloader._external_tools()
+
+    # Not on PATH in the packaged app: yt-dlp must be told where they are.
+    assert opts["ffmpeg_location"] == str(tmp_path / f"ffmpeg{suffix}")
+    assert opts["js_runtimes"] == {"deno": {"path": str(tmp_path / f"deno{suffix}")}}
+
+
+def test_yt_dlp_uses_path_when_nothing_is_bundled(monkeypatch: pytest.MonkeyPatch) -> None:
+    from local_encoder import downloader
+
+    monkeypatch.setattr(_frozen, "_bundle_dirs", lambda: [])
+    monkeypatch.delenv("FFMPEG_BIN", raising=False)
+    monkeypatch.delenv("DENO_BIN", raising=False)
+    assert downloader._external_tools() == {}
+
+
 # ---------------------------------------------------------------------------
 # Work folder
 # ---------------------------------------------------------------------------
@@ -180,5 +214,6 @@ def test_runtime_packages_exclude_build_tools() -> None:
     make_dist = _load_script("make_dist")
     packages = {p.lower() for p in make_dist.runtime_packages()}
     assert {"yt-dlp", "fastapi", "httpx"} <= packages
+    assert "yt-dlp-ejs" in packages  # from yt-dlp[default]: its license must be listed
     assert "pyinstaller" not in packages
     assert "pytest" not in packages

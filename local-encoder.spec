@@ -5,6 +5,7 @@ Release builds run in .github/workflows/release.yml on every platform. Local bui
     pip install -e ".[build]"
     python scripts/download_vendor.py          # web UI libraries
     python scripts/fetch_ffmpeg.py <platform>  # static FFmpeg into ./bin (optional)
+    python scripts/fetch_deno.py <platform>    # deno (YouTube JS runtime) into ./bin (optional)
     pyinstaller local-encoder.spec
     python scripts/make_dist.py <platform>     # zip/tar.gz with licenses
 
@@ -21,12 +22,13 @@ block_cipher = None
 HERE = Path(SPECPATH)
 BIN_DIR = HERE / "bin"
 
-# FFmpeg is embedded only on macOS (one Gatekeeper approval for the whole app). On Windows and
-# Linux scripts/make_dist.py ships bin/ffmpeg* next to the executable instead, so ~300 MB are
-# not extracted to a temp folder on every start. See local_encoder/_frozen.py.
+# FFmpeg and deno are embedded only on macOS (one Gatekeeper approval for the whole app). On
+# Windows and Linux scripts/make_dist.py ships bin/ffmpeg*, bin/deno next to the executable
+# instead, so ~400 MB are not extracted to a temp folder on every start.
+# See local_encoder/_frozen.py.
 binaries = []
 if sys.platform == "darwin":
-    for name in ("ffmpeg", "ffprobe"):
+    for name in ("ffmpeg", "ffprobe", "deno"):
         candidate = BIN_DIR / name
         if candidate.exists():
             binaries.append((str(candidate), "."))

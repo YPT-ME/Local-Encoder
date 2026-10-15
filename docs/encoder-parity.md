@@ -31,16 +31,23 @@ needs the end-to-end run in `.github/prompts/local-encoder-e2e-test.prompt.md`):
 8. ✅ **Too many logins per job.** The web UI logs in once per connection. Jobs reuse the token (`AVideoClient.use_login`), and categories come from the login response.
 
 Found and fixed while packaging (2026-10-15):
-- The WebP thumbnail used `-vsync 0`, which FFmpeg 9 (bundled in the releases) no longer accepts, so
-  the thumbnail was silently skipped. The option was removed (the `fps=10` filter already fixes the
-  frame rate), and it works on old and new FFmpeg versions. **The PHP Encoder has the same
-  problem** (`Encoder.php` `getWebpImage`, `getImage.php`, `getImageMP4.php`): on FFmpeg 9 its
-  WebP thumbnails will fail too.
-
-Still open:
-- YouTube imports work without a JavaScript runtime, but yt-dlp warns that this is deprecated and
-  some formats may be missing (https://github.com/yt-dlp/yt-dlp/wiki/EJS). The releases do not bundle
-  a JS runtime (deno) yet.
+- **`-vsync` removed in FFmpeg 9.**
+  - The WebP thumbnail used `-vsync 0`, which the FFmpeg 9 bundled in the releases no longer
+    accepts, so the thumbnail was silently skipped. The option was removed: the `fps=10` filter
+    already fixes the frame rate, and it works on old and new FFmpeg.
+  - The same fix was made in the PHP Encoder (`Encoder.php` `getWebpImage`, `getImage.php`,
+    `getImageMP4.php`).
+  - AVideo's live restreamer (`plugin/Live/standAloneFiles/restreamer.json.php`) sent
+    `-vsync cfr`. It now uses `ffmpegDetectCfrSyncOption()`, which keeps `-vsync cfr` wherever it
+    still exists and switches to `-fps_mode cfr` only on FFmpeg 9+.
+- **YouTube without a JavaScript runtime** (https://github.com/yt-dlp/yt-dlp/wiki/EJS).
+  - Before: some formats were missing, and yt-dlp warned that this mode is deprecated.
+  - The releases now bundle deno (`scripts/fetch_deno.py`), and the app depends on
+    `yt-dlp[default]`, which adds the `yt-dlp-ejs` solver.
+  - `downloader._external_tools()` passes deno and FFmpeg to yt-dlp. They are not on PATH in the
+    packaged app; without FFmpeg, yt-dlp could not merge video and audio.
+  - Result for the same YouTube video: 24 formats instead of 11, verified with the packaged
+    executable (download → encode → upload).
 
 Also fixed:
 - Uploaded file names from the browser are sanitized, so they cannot escape the job folder.

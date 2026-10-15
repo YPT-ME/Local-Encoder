@@ -12,7 +12,7 @@ applyTo: "**/*.py"
 | --- | --- |
 | `local_encoder/avideo_client.py` | Every HTTP call to an AVideo site (login, register, chunk upload, images, notify, config, categories). No other module talks HTTP to AVideo. |
 | `local_encoder/encoder.py` | Every FFmpeg command (MP4, HLS, MP3, thumbnails) and FFprobe probing used by encoding. `ENCODING_SETTINGS` mirrors the PHP Encoder. |
-| `local_encoder/downloader.py` | `yt-dlp` integration (used as a Python library, not the CLI binary). |
+| `local_encoder/downloader.py` | `yt-dlp` integration (used as a Python library, not the CLI binary). `_external_tools()` gives yt-dlp the bundled FFmpeg and deno, which are not on PATH in the packaged app. |
 | `local_encoder/server.py` | FastAPI web UI backend, in-memory job store, single worker thread, SSE progress. |
 | `local_encoder/cli.py` | Typer CLI (`import`, `serve`, `logs`). |
 | `local_encoder/config.py` | `.env`/environment configuration (`Config`, `load_config`, `default_work_dir`). |

@@ -4,8 +4,8 @@ Usage (after `pyinstaller local-encoder.spec`):
     python scripts/make_dist.py <platform>
 
 Creates dist/LocalEncoder-<platform>.zip (Windows/macOS) or .tar.gz (Linux) with:
-    LocalEncoder[.exe]          the application (FFmpeg embedded on macOS)
-    ffmpeg[.exe], ffprobe[.exe] Windows/Linux only, next to the application
+    LocalEncoder[.exe]          the application (FFmpeg and deno embedded on macOS)
+    ffmpeg, ffprobe, deno       Windows/Linux only, next to the application
     README.txt                  how to start it (packaging/README-dist.txt)
     LICENSE.txt                 Local Encoder (MIT)
     THIRD_PARTY_NOTICES.md      FFmpeg build + source links, Python packages, JS libraries
@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import importlib.metadata as metadata
 import json
-import re
 import shutil
 import stat
 import subprocess
@@ -34,37 +33,32 @@ PLATFORMS = {"windows-x64", "linux-x64", "linux-arm64", "macos-arm64", "macos-x6
 
 
 def runtime_packages(name: str = "local-encoder") -> list[str]:
-    """The installed distributions *name* needs at runtime (no extras, no build tools)."""
+    """The installed distributions *name* needs at runtime, following requested extras such as
+    ``yt-dlp[default]`` (no dev/build extras of local-encoder itself, no build tools)."""
+    from packaging.requirements import Requirement  # PyInstaller depends on packaging
+
     seen: dict[str, str] = {}
-    pending = [name]
+    pending: list[tuple[str, frozenset[str]]] = [(name, frozenset())]
     while pending:
-        current = pending.pop()
+        current, extras = pending.pop()
         try:
             dist = metadata.distribution(current)
         except metadata.PackageNotFoundError:
             continue
         key = dist.metadata["Name"].lower().replace("_", "-")
-        if key in seen:
+        if key in seen and not extras:
             continue
         seen[key] = dist.metadata["Name"]
-        for requirement in dist.requires or []:
-            if "extra ==" in requirement:
-                continue
-            marker = requirement.split(";", 1)
-            if len(marker) == 2 and not _marker_applies(marker[1]):
-                continue
-            pending.append(re.split(r"[\s<>=!~\[(;]", requirement, maxsplit=1)[0])
+        for line in dist.requires or []:
+            requirement = Requirement(line)
+            marker = requirement.marker
+            if marker is not None:
+                environments = [{"extra": extra} for extra in extras] or [{"extra": ""}]
+                if not any(marker.evaluate(env) for env in environments):
+                    continue
+            pending.append((requirement.name, frozenset(requirement.extras)))
     seen.pop("local-encoder", None)
     return sorted(seen.values(), key=str.lower)
-
-
-def _marker_applies(marker: str) -> bool:
-    try:
-        from packaging.markers import Marker  # shipped with pip-licenses' dependencies
-
-        return bool(Marker(marker).evaluate())
-    except Exception:
-        return True
 
 
 def _pip_licenses(packages: list[str], fmt: str, *extra: str) -> str:
@@ -93,6 +87,16 @@ def ffmpeg_details(info: dict[str, str]) -> str:
     )
 
 
+def deno_details(info_file: Path) -> str:
+    if not info_file.exists():
+        return "_deno was not bundled in this build._"
+    info = json.loads(info_file.read_text(encoding="utf-8"))
+    return (
+        f"Version `{info['version_line']}` ({info['release']}), license {info['license']}, "
+        f"downloaded from {info['archive_url']}. Source code: {info['source_url']}."
+    )
+
+
 def main() -> None:
     if len(sys.argv) != 2 or sys.argv[1] not in PLATFORMS:
         raise SystemExit(__doc__)
@@ -116,7 +120,7 @@ def main() -> None:
     app.chmod(app.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
 
     if not platform.startswith("macos"):  # embedded in the executable on macOS (see the spec)
-        for tool in ("ffmpeg", "ffprobe"):
+        for tool in ("ffmpeg", "ffprobe", "deno"):
             source = ROOT / "bin" / f"{tool}{exe}"
             if source.exists():
                 shutil.copy2(source, stage / source.name)
@@ -141,6 +145,9 @@ def main() -> None:
     packages = runtime_packages()
     notices = (PACKAGING / "THIRD_PARTY_NOTICES.md").read_text(encoding="utf-8")
     notices = notices.replace("{{FFMPEG_BUILD_DETAILS}}", ffmpeg_details(info))
+    notices = notices.replace(
+        "{{DENO_BUILD_DETAILS}}", deno_details(ROOT / "bin" / "deno-build-info.json")
+    )
     notices = notices.replace(
         "{{PYTHON_PACKAGES}}", _pip_licenses(packages, "markdown", "--with-urls").strip()
     )

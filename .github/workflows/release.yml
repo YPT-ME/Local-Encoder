@@ -6,16 +6,25 @@ name: Release
 #
 # Triggers:
 #   - push a tag:        git tag v1.2.3 && git push origin v1.2.3
-#   - Actions tab:       "Run workflow" (empty version = next patch version)
+#   - Actions tab:       "Run workflow"; leave the version empty and the next version is
+#                        calculated from the latest release + the chosen increment
 #   - yt-dlp-update.yml: automatically when yt-dlp publishes a new version
+
+run-name: >-
+  Release ${{ inputs.version && format('v{0}', inputs.version) || (github.ref_type == 'tag' && github.ref_name) || format('(next {0} version)', inputs.bump || 'patch') }}
 
 on:
   push:
     tags: ["v*.*.*"]
   workflow_dispatch:
     inputs:
+      bump:
+        description: "Increment used when the version is empty (latest release 1.2.3 → patch 1.2.4, minor 1.3.0, major 2.0.0)"
+        type: choice
+        options: [patch, minor, major]
+        default: patch
       version:
-        description: "Version to publish, e.g. 1.2.0 (empty = next patch version)"
+        description: "Exact version (optional, e.g. 1.2.0). Leave empty to calculate it automatically"
         type: string
         required: false
         default: ""
@@ -47,35 +56,56 @@ jobs:
       version: ${{ steps.version.outputs.version }}
       ref: ${{ steps.version.outputs.ref }}
     steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          persist-credentials: false
+
       - id: version
         env:
           GH_TOKEN: ${{ github.token }}
           INPUT_VERSION: ${{ inputs.version }}
+          INPUT_BUMP: ${{ inputs.bump }}
           INPUT_REF: ${{ inputs.ref }}
         run: |
           set -euo pipefail
+          bump="${INPUT_BUMP:-patch}"  # the daily yt-dlp release always uses patch
+          latest=$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName 2>/dev/null || true)
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
             version="${GITHUB_REF_NAME#v}"
+            how="from the pushed tag $GITHUB_REF_NAME"
           elif [[ -n "${INPUT_VERSION:-}" ]]; then
             version="${INPUT_VERSION#v}"
+            how="typed in the Run workflow form"
+          elif [[ -z "$latest" ]]; then
+            # First release: the development version in local_encoder/__init__.py
+            version=$(grep '^__version__' local_encoder/__init__.py | cut -d '"' -f 2)
+            how="first release, taken from local_encoder/__init__.py"
           else
-            latest=$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName 2>/dev/null || true)
-            if [[ -z "$latest" ]]; then
-              version="0.1.0"
-            else
-              IFS=. read -r major minor patch <<< "${latest#v}"
-              version="$major.$minor.$((patch + 1))"
-            fi
+            IFS=. read -r major minor patch <<< "${latest#v}"
+            case "$bump" in
+              major) version="$((major + 1)).0.0" ;;
+              minor) version="$major.$((minor + 1)).0" ;;
+              *)     version="$major.$minor.$((patch + 1))" ;;
+            esac
+            how="latest release $latest + $bump"
           fi
           if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "::error::Invalid version '$version' (expected X.Y.Z)"; exit 1
           fi
           if gh release view "v$version" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            echo "::error::Release v$version already exists"; exit 1
+            echo "::error::Release v$version already exists. Leave the version empty to use the next one, or type a higher one."; exit 1
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "ref=${INPUT_REF:-$GITHUB_SHA}" >> "$GITHUB_OUTPUT"
-          echo "Releasing v$version from ${INPUT_REF:-$GITHUB_SHA}"
+          echo "::notice title=Version v$version::$how"
+          {
+            echo "### Releasing v$version"
+            echo
+            echo "- How the version was chosen: $how"
+            echo "- Latest published release: ${latest:-none}"
+            echo "- Commit: ${INPUT_REF:-$GITHUB_SHA}"
+          } >> "$GITHUB_STEP_SUMMARY"
 
   tests:
     name: Tests
@@ -103,6 +133,7 @@ jobs:
         shell: bash
     env:
       VERSION: ${{ needs.version.outputs.version }}
+      PYTHONUTF8: "1" # Windows runners default to cp1252 output
     steps:
       - uses: actions/checkout@v4
         with:
@@ -128,6 +159,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: python scripts/fetch_ffmpeg.py "${{ matrix.platform }}"
+
+      - name: deno (JavaScript runtime for YouTube in yt-dlp)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python scripts/fetch_deno.py "${{ matrix.platform }}"
 
       - name: Build executable
         run: pyinstaller --noconfirm --clean local-encoder.spec

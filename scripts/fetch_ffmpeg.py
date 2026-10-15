@@ -20,7 +20,6 @@ import io
 import json
 import os
 import re
-import shutil
 import stat
 import subprocess
 import sys
@@ -140,8 +139,9 @@ def main() -> None:
     if len(sys.argv) != 2 or sys.argv[1] not in {*BTBN_PLATFORM, *RIEDL_PLATFORM}:
         raise SystemExit(__doc__)
     platform = sys.argv[1]
-    if BIN_DIR.exists():
-        shutil.rmtree(BIN_DIR)
+    # Only replace FFmpeg's own files (scripts/fetch_deno.py also writes into bin/).
+    for old in BIN_DIR.glob("ff*"):
+        old.unlink()
     info = _fetch_btbn(platform) if platform in BTBN_PLATFORM else _fetch_riedl(platform)
 
     exe = ".exe" if platform.startswith("windows") else ""
