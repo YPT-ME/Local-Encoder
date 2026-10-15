@@ -48,7 +48,8 @@ Browser UI (static/index.html, React+Tailwind vendored)   CLI (cli.py, Typer)
 
 Pipeline: download/receive → probe → encode → thumbnails → login → register (metadata) → chunk
 upload → finalize → images → notify done. Settings: `.env`/env (`config.py`); web UI connection
-session id in browser `localStorage` (never the password). Logs, history and the work folder:
+session id in browser `localStorage` (never the password); the page's remembered choices in
+`settings.json`. Logs, history, settings and the work folder:
 `~/.local/share/local-encoder/` (`LOCAL_ENCODER_WORK_DIR` overrides the work folder). The web UI
 listens on `127.0.0.1:47800` (another free port if busy; a second start just reopens the page).
 `serve` runs in the tray icon (`tray.py`; no console window on Windows) and keeps the computer

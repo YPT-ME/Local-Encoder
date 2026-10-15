@@ -34,7 +34,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingRes
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from local_encoder import __version__, keep_awake, updates
+from local_encoder import __version__, folders, history, keep_awake, settings, updates
 from local_encoder.avideo_client import (
     AVideoClient,
     LoginResult,
@@ -243,6 +243,26 @@ class RemoveRequest(BaseModel):
     delete_files: bool = True
 
 
+class FolderRequest(BaseModel):
+    path: str = ""
+
+
+class ScanRequest(BaseModel):
+    path: str
+    recursive: bool = False
+    site_url: str = ""
+
+
+class LocalImportRequest(BaseModel):
+    session_id: str
+    paths: list[str]
+    categories_id: int = 0
+    description: str = ""
+    format: str = "auto"
+    resolutions: list[int] = []
+    use_gpu: bool = True
+
+
 class ReportRequest(BaseModel):
     job_id: str = ""
 
@@ -360,6 +380,7 @@ class Job:
             "error": self.error,
             "created": self.created,
             "has_files": self.work_dir.exists(),
+            "path": str(self.raw_file) if self.kind == "local" and self.raw_file else "",
         }
 
     def snapshot(self) -> dict[str, Any]:
@@ -486,6 +507,29 @@ def _run_job(job: Job) -> None:
         _finish_job(job)
 
 
+def _record_history(job: Job) -> None:
+    """Remember the result, so a folder scan can show which videos were already sent."""
+    if job.status not in ("done", "error"):
+        return
+    source = job.source
+    if job.kind == "local" and job.raw_file is not None:
+        source = str(job.raw_file)
+    entry = history.HistoryEntry(
+        id=job.id,
+        url=source,
+        server=job.session.server_url,
+        username=job.session.login.username,
+        title=job.title,
+        status="success" if job.status == "done" else "failed",
+        error=str((job.error or {}).get("message", "")),
+        videos_id=job.videos_id,
+    )
+    try:
+        history.update_entry(entry)
+    except OSError as exc:
+        logger.warning("Could not write the history: %s", exc)
+
+
 def _finish_job(job: Job) -> None:
     """Delete the job's files after success; keep them after a failure so no work is lost."""
     if job.status == "done":
@@ -493,6 +537,7 @@ def _finish_job(job: Job) -> None:
     elif job.work_dir.exists() and any(job.work_dir.iterdir()):
         logger.info("Job %s: files kept for a new attempt in %s", job.id, job.work_dir)
     job.emit("info", {"has_files": job.work_dir.exists()})
+    _record_history(job)
     if not page_open() and _notifier is not None and job.status in ("done", "error"):
         try:
             _notifier(job.status, job.title or job.source)
@@ -1030,6 +1075,111 @@ def start_import_file(
 # ---------------------------------------------------------------------------
 # Routes – the queue
 # ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# Routes – videos already on this computer (a folder)
+# ---------------------------------------------------------------------------
+
+
+def _folder_error(exc: LocalEncoderError) -> HTTPException:
+    return HTTPException(status_code=400, detail=classify(exc).to_dict())
+
+
+@app.post("/api/folders/browse")
+def browse_folder(req: FolderRequest) -> dict[str, Any]:
+    """Sub-folders of a folder (home when empty), plus the usual starting places."""
+    try:
+        return folders.browse(req.path)
+    except LocalEncoderError as exc:
+        raise _folder_error(exc) from exc
+
+
+@app.post("/api/folders/scan")
+def scan_folder(req: ScanRequest) -> dict[str, Any]:
+    """The videos in a folder, each marked when it was already sent to *site_url*."""
+    try:
+        result = folders.scan(req.path, recursive=req.recursive, skip=OUTPUT_DIR)
+    except LocalEncoderError as exc:
+        raise _folder_error(exc) from exc
+    sent = history.sent_items(req.site_url) if req.site_url else {}
+    active = {
+        os.path.normcase(str(j.raw_file))
+        for j in _jobs.values()
+        if j.kind == "local" and j.status in ACTIVE and j.raw_file is not None
+    }
+    videos = []
+    for video in result.videos:
+        key = os.path.normcase(video.path)
+        entry = sent.get(key)
+        videos.append(
+            {
+                "path": video.path,
+                "name": video.name,
+                "rel": video.rel,
+                "size": video.size,
+                "mtime": video.mtime,
+                "sent": {"videos_id": entry.videos_id, "date": entry.updated_at} if entry else None,
+                "queued": key in active,
+            }
+        )
+    return {"path": result.path, "videos": videos, "truncated": result.truncated}
+
+
+@app.post("/api/import-local")
+def start_import_local(req: LocalImportRequest) -> dict[str, Any]:
+    """Queue videos that are already on this computer; they are read where they are."""
+    session = _get_session(req.session_id)
+    active = {
+        os.path.normcase(str(j.raw_file))
+        for j in _jobs.values()
+        if j.kind == "local" and j.status in ACTIVE and j.raw_file is not None
+    }
+    job_ids: list[str] = []
+    skipped: list[dict[str, Any]] = []
+    for raw_path in req.paths[:500]:
+        try:
+            path = folders.video_file(raw_path)
+        except LocalEncoderError as exc:
+            skipped.append({"path": raw_path, "error": classify(exc).to_dict()})
+            continue
+        if os.path.normcase(str(path)) in active:
+            continue  # already waiting or running
+        options = JobOptions(
+            categories_id=req.categories_id,
+            title=sanitize_filename(path.stem)[:80],
+            description=req.description,
+            fmt=req.format.lower(),
+            resolutions=list(req.resolutions),
+            use_gpu=req.use_gpu,
+        )
+        job = Job("local", path.name, session, options)
+        job.raw_file = path
+        job.emit("info", {"file_size_bytes": path.stat().st_size})
+        _enqueue(job)
+        active.add(os.path.normcase(str(path)))
+        job_ids.append(job.id)
+    return {"job_ids": job_ids, "skipped": skipped}
+
+
+# ---------------------------------------------------------------------------
+# Routes – remembered choices
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/settings")
+def get_settings() -> dict[str, Any]:
+    return settings.load()
+
+
+@app.post("/api/settings")
+def save_settings(changes: dict[str, Any]) -> dict[str, Any]:
+    """Save the page's choices (unknown keys and wrong types are ignored)."""
+    try:
+        return settings.save(changes)
+    except OSError as exc:
+        logger.warning("Could not save the settings: %s", exc)
+        raise HTTPException(status_code=500, detail="Could not save the settings.") from exc
 
 
 def _get_job(job_id: str) -> Job:

@@ -37,6 +37,9 @@ MESSAGES: dict[str, str] = {
     ),
     "unreadable_file": "This file could not be read as a video. It may be damaged.",
     "source_missing": "The original file is gone. Add the video again.",
+    "folder_not_found": "This folder was not found: {path}",
+    "folder_denied": "Local Encoder is not allowed to open this folder: {path}",
+    "file_not_video": "This is not a video file: {path}",
     "no_disk_space": (
         "There is not enough free disk space. About {needed_gb} GB is needed and "
         "{free_gb} GB is free. Free some space and try again."

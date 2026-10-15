@@ -57,9 +57,11 @@ The program is not digitally signed yet, so Windows or macOS may show a warning 
 2. Click **Connect**. The page then shows what your site receives (for example *Streaming (HLS) · MP4 video · up to 1080p*). If something is wrong, it tells you what to do.
 3. Your sites are remembered (never the password), so you can switch between several sites with one click, or remove a site you no longer use.
 
+Local Encoder remembers your choices on this computer (language, sites, last folder, format, qualities and other options), so you do not have to choose them again next time.
+
 ### 3. Add videos (step 2 on the page)
 
-1. Paste a video **link**: the page shows its picture, title and length before you add it. Or choose **Files**, or simply **drag video files onto the page** (several at once).
+1. Paste a video **link**: the page shows its picture, title and length before you add it. Or choose **Files**, or simply **drag video files onto the page** (several at once). Or choose **Folder**: pick a folder on your computer, see its videos (optionally with sub-folders), tick the ones to send. Videos already sent to the current site are marked, and the videos are read where they are (nothing is copied).
 2. Optionally enter a title, a category and a description. Leave everything under **Advanced options** as it is unless you need it: the program picks the format and qualities your site accepts, and uses your graphics card when it can (faster).
 3. Click **Add to queue**. Each video shows its progress (download, convert, send). You can close the page and open it again later: the queue is still there. You get a notification when a video is sent.
 4. When a video is sent, use **Open video**, **Edit on site** or **Copy link**.
@@ -103,6 +105,8 @@ New versions are released automatically when [yt-dlp](https://github.com/yt-dlp/
 * Real-time browser progress updates; the queue survives page reloads
 * Cancel, try again without starting over, open the work folder, report a problem
 * Link preview, drag and drop of several files, several saved sites
+* Send videos from a folder on your computer: pick which ones, see which were already sent
+* Your choices are remembered (language, sites, last folder, format, qualities, options)
 * Desktop notifications, tray icon, the computer kept awake while working
 * English, Portuguese and Spanish
 * CLI interface

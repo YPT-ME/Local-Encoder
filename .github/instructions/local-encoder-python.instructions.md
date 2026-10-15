@@ -15,13 +15,15 @@ applyTo: "**/*.py"
 | `local_encoder/downloader.py` | `yt-dlp` integration (used as a Python library, not the CLI binary). `_external_tools()` gives yt-dlp the bundled FFmpeg and deno, which are not on PATH in the packaged app. |
 | `local_encoder/server.py` | FastAPI web UI backend: `Job` objects (state, logs, files kept for “Try again”), single worker thread, one SSE stream for the whole queue (`/api/events`), job actions, preview, report. |
 | `local_encoder/errors.py` | Turns any exception into a stable `code` + English message (`classify`); the web UI translates the code (`static/i18n.js`, `err.<code>`). Raise `LocalEncoderError(code)` for problems Local Encoder detects itself. |
+| `local_encoder/folders.py` | Browse the user's folders and list video files (the “Folder” tab); `video_file()` validates a path the page sends. Hidden/system folders and the work folder are skipped. |
+| `local_encoder/settings.py` | The web UI's remembered choices in `settings.json` (validated schema, unknown keys dropped, never a password). |
 | `local_encoder/keep_awake.py` | `inhibit()`: keeps the computer awake while videos are processed (ref-counted, never raises). |
 | `local_encoder/tray.py` | Tray icon (pystray + Pillow) used by `serve`; falls back to console mode when no tray is available. |
 | `local_encoder/cli.py` | Typer CLI (`import`, `serve`, `logs`). |
 | `local_encoder/config.py` | `.env`/environment configuration (`Config`, `load_config`, `default_work_dir`). |
 | `local_encoder/_frozen.py` | PyInstaller bundle detection and bundled `ffmpeg`/`ffprobe` resolution (next to the executable, or embedded on macOS). |
 | `local_encoder/updates.py` | Checks GitHub Releases for a newer version (packaged app only). |
-| `local_encoder/history.py` | JSON-lines job history in `~/.local/share/local-encoder/history.jsonl`. |
+| `local_encoder/history.py` | JSON-lines job history in `~/.local/share/local-encoder/history.jsonl` (CLI and web UI jobs; `sent_items()` tells which links/files were already sent to a site). |
 | `local_encoder/logging_setup.py` | Rotating log file in `~/.local/share/local-encoder/local-encoder.log`. |
 | `local_encoder/progress.py` | Rich progress bars for the CLI. |
 | `local_encoder/utils.py` | Small shared helpers (`sanitize_filename`, `probe_duration`, `generate_file_id`). |

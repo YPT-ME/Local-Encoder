@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -120,3 +121,16 @@ def list_entries(
     if username:
         entries = [e for e in entries if e.username == username]
     return list(reversed(entries))
+
+
+def sent_items(server: str) -> dict[str, HistoryEntry]:
+    """The latest successful upload to *server* per source (a link, or a file path).
+
+    File paths are compared with ``os.path.normcase`` (case-insensitive on Windows).
+    """
+    wanted = server.rstrip("/")
+    result: dict[str, HistoryEntry] = {}
+    for entry in _read_all():
+        if entry.status == "success" and entry.server.rstrip("/") == wanted:
+            result[os.path.normcase(entry.url)] = entry
+    return result

@@ -48,6 +48,10 @@ some of which may be misconfigured or hostile.
   `video_id_hash`); extend the patterns when a new secret could reach the log.
 - Uploaded files from the browser: write only inside the job work directory with a generated name
   (`sanitize_filename` + unique id); never use the client-supplied path.
+- Local files (“Folder” tab): the page may list folders and queue video files anywhere on the
+  user's computer (it is their machine, behind the local-only checks above). Accept only absolute,
+  existing paths with a video extension (`folders.video_file`), read them in place and never
+  write, move or delete them — only the job's own work folder is cleaned.
 
 ## Subprocesses (FFmpeg, FFprobe)
 

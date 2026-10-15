@@ -89,7 +89,7 @@ Fixed while packaging (2026-10-15), re-verified:
 | Title, description and thumbnail from the link | 🟡 | The title and description are used (`server.py:533-534`, `cli.py:223-224`). The link's thumbnail is not uploaded: the Encoder prefers it over a frame grab (`E/objects/Encoder.php:2940-2946`). The Encoder does not use the link's duration either. |
 | YouTube channel import (start/end index) | ❌ | Only `youtube.com/channel\|user` links, and only for users with `canBulkEncode` (`E/view/youtubeDl.json.php:39-53`). The Encoder has **no** playlist import. |
 | Import over FTP/FTPS | ❌ | Lists a remote folder and queues every `.mp4`/`.mp3` (`E/objects/FTPDownloader.php:86-117`). Low priority. |
-| Bulk-encode a folder | ❌ | On the Encoder this is a server folder for admins or `canBulkEncode` users (`E/view/index_shareVideos.php:90-136`). The Local Encoder version would be a local folder. |
+| Bulk-encode a folder | ✅ | The Encoder lists a server folder for admins or `canBulkEncode` users (`E/view/index_shareVideos.php:90-136`). Local Encoder's “Folder” tab lists a folder of the user's own computer (`folders.py`, `/api/folders/*`), marks the videos already sent to the current site (`history.sent_items`) and reads them in place (`/api/import-local`). Like the Encoder, every video gets its file name as title. |
 | Content keyword filter | ➖ | A policy of the Encoder server (`E/objects/Encoder.php:80-95`). |
 | Jobs sent by the site (`queue.php`) | ➖ | The site cannot reach Local Encoder. |
 | Encoder API (`submit_video`, queue status/delete/restart/edit) | ❌ | Optional (`E/API/`). The local web API could offer something similar. |

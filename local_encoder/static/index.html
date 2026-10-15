@@ -84,6 +84,81 @@ async function api(path, body) {
   return { ok: res.ok, status: res.status, data };
 }
 
+// Choices remembered on this computer (server-side settings.json, so they survive another
+// port, another browser or an update). Older versions kept them in localStorage: moved once.
+const PREF_DEFAULTS = {
+  lang: null, sites: [], active_site: '', add_tab: 'link', format: 'auto', qualities: [],
+  use_gpu: true, show_advanced: false, category_by_site: {}, folder: '', recent_folders: [],
+  folder_recursive: false, hide_sent: false,
+};
+function readLocal(key, fallback) {
+  try { const v = localStorage.getItem(key); return v === null ? fallback : JSON.parse(v); } catch { return fallback; }
+}
+function migrateLocalPrefs() {
+  const prefs = {};
+  const sessions = readLocal('ave_sessions', {});
+  let sites = readLocal('ave_sites', []);
+  const oldUrl = readLocal('ave_server_url', null);
+  if (!sites.length && oldUrl) {
+    sites = [{ url: normUrl(oldUrl), username: readLocal('ave_username', ''), sslVerify: readLocal('ave_ssl_verify', true), sessionId: readLocal('ave_session_id', '') }];
+  }
+  if (sites.length) {
+    prefs.sites = sites.map(({ url, username, sslVerify }) => ({ url, username, sslVerify: sslVerify !== false }));
+    sites.forEach(s => { if (s.sessionId) sessions[`${s.url}|${s.username}`] = s.sessionId; });
+    prefs.active_site = readLocal('ave_active_site', '') || `${sites[0].url}|${sites[0].username}`;
+  }
+  const map = { ave_lang: 'lang', ave_add_tab: 'add_tab', ave_format: 'format', ave_qualities: 'qualities',
+    ave_use_gpu: 'use_gpu', ave_show_advanced: 'show_advanced', ave_cat_by_site: 'category_by_site' };
+  Object.entries(map).forEach(([k, pk]) => { const v = readLocal(k, undefined); if (v !== undefined) prefs[pk] = v; });
+  try {
+    localStorage.setItem('ave_sessions', JSON.stringify(sessions));
+    ['ave_password', 'ave_server_url', 'ave_username', 'ave_ssl_verify', 'ave_session_id', 'ave_resolutions', 'ave_tab',
+     'ave_sites', 'ave_active_site', ...Object.keys(map)].forEach(k => localStorage.removeItem(k));
+  } catch {}
+  return prefs;
+}
+
+function usePrefs() {
+  const [prefs, setPrefs] = useState(null);
+  const pending = useRef({});
+  const timer = useRef(null);
+  const flush = useCallback(keepalive => {
+    const body = pending.current;
+    pending.current = {};
+    if (!Object.keys(body).length) return;
+    fetch('/api/settings', {
+      method: 'POST', keepalive: !!keepalive,
+      headers: { 'Content-Type': 'application/json', 'X-Local-Encoder': '1' },
+      body: JSON.stringify(body),
+    }).catch(() => {});
+  }, []);
+  useEffect(() => {
+    fetch('/api/settings').then(r => r.json()).then(stored => {
+      let next = { ...PREF_DEFAULTS, ...stored };
+      if (!stored.saved) {
+        const moved = migrateLocalPrefs();
+        next = { ...next, ...moved };
+        pending.current = { ...moved };
+        flush(false);
+      }
+      setPrefs(next);
+    }).catch(() => setPrefs({ ...PREF_DEFAULTS }));
+    const onHide = () => flush(true);
+    window.addEventListener('pagehide', onHide);
+    return () => window.removeEventListener('pagehide', onHide);
+  }, [flush]);
+  const setPref = useCallback((key, value) => {
+    setPrefs(prev => {
+      const next = typeof value === 'function' ? value(prev[key]) : value;
+      pending.current[key] = next;
+      return { ...prev, [key]: next };
+    });
+    clearTimeout(timer.current);
+    timer.current = setTimeout(() => flush(false), 400);
+  }, [flush]);
+  return [prefs, setPref];
+}
+
 function normUrl(u) {
   let url = (u || '').trim();
   if (!url) return '';
@@ -354,6 +429,178 @@ function SitePanel({ sites, activeKey, conn, form, setForm, showMore, setShowMor
   );
 }
 
+// ── Folder: pick a folder on this computer, then the videos to send ────────
+function fmtDate(epochOrIso) {
+  const d = typeof epochOrIso === 'number' ? new Date(epochOrIso * 1000) : new Date(epochOrIso);
+  return isNaN(d) ? '' : d.toLocaleDateString(LANG);
+}
+
+function FolderPanel({ prefs, setPref, siteUrl, selected, setSelected, refreshKey }) {
+  const [browsing, setBrowsing] = useState(!prefs.folder);
+  const [browse, setBrowse] = useState(null);
+  const [pathInput, setPathInput] = useState(prefs.folder || '');
+  const [scan, setScan] = useState({ state: 'idle' });
+  const [error, setError] = useState(null);
+
+  async function openFolder(path) {
+    setError(null);
+    try {
+      const r = await api('/api/folders/browse', { path: path || '' });
+      if (!r.ok) {
+        setError((r.data && r.data.detail) || { code: 'unknown' });
+        if (path && !browse) {  // a remembered folder that is gone: start from the home folder
+          const home = await api('/api/folders/browse', { path: '' });
+          if (home.ok) { setBrowse(home.data); setPathInput(home.data.path); }
+        }
+        return;
+      }
+      setBrowse(r.data);
+      setPathInput(r.data.path);
+    } catch { setError({ code: 'connection' }); }
+  }
+
+  async function scanFolder(path, keepSelection) {
+    if (!path) return;
+    setScan(prev => ({ ...prev, state: 'loading' }));
+    setError(null);
+    try {
+      const r = await api('/api/folders/scan', { path, recursive: !!prefs.folder_recursive, site_url: siteUrl || '' });
+      if (!r.ok) { setScan({ state: 'idle' }); setError((r.data && r.data.detail) || { code: 'unknown' }); setBrowsing(true); return; }
+      const found = r.data;
+      setScan({ state: 'ok', ...found });
+      setPref('folder', found.path);
+      setPref('recent_folders', prev => [found.path, ...(prev || []).filter(f => f !== found.path)].slice(0, 8));
+      setSelected(prev => {
+        const available = found.videos.filter(v => !v.queued).map(v => v.path);
+        if (keepSelection) return prev.filter(p => available.includes(p));
+        return found.videos.filter(v => !v.sent && !v.queued).map(v => v.path);
+      });
+      setBrowsing(false);
+    } catch { setScan({ state: 'idle' }); setError({ code: 'connection' }); }
+  }
+
+  // Remembered folder: list it right away; look again when the site or the options change.
+  useEffect(() => {
+    if (prefs.folder) scanFolder(prefs.folder, refreshKey > 0);
+    else openFolder('');
+  }, [siteUrl, prefs.folder_recursive, refreshKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (browsing && !browse) openFolder(prefs.folder || ''); }, [browsing]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const videos = scan.state === 'ok' || scan.videos ? (scan.videos || []) : [];
+  const shown = prefs.hide_sent ? videos.filter(v => !v.sent) : videos;
+  const toggle = path => setSelected(prev => (prev.includes(path) ? prev.filter(p => p !== path) : [...prev, path]));
+  const placeName = pl => (pl.key === 'drive' ? pl.name : t('folder.place_' + pl.key));
+
+  return (
+    <div className="space-y-2">
+      {(prefs.recent_folders || []).length > 0 && (
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="text-xs text-slate-500">{t('folder.recent')}</span>
+          {prefs.recent_folders.map(f => (
+            <button key={f} type="button" title={f} onClick={() => scanFolder(f)}
+              className={cls('max-w-[180px] truncate rounded-full border px-2 py-0.5 text-xs',
+                f === scan.path ? 'border-brand text-brand bg-brand/10' : 'border-slate-700 text-slate-400 hover:border-slate-500')}>
+              {f.split(/[\\/]/).filter(Boolean).pop() || f}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {!browsing && scan.path && (
+        <div className="flex items-center gap-2 rounded-lg border border-slate-800 bg-slate-950/60 px-2 py-1.5">
+          <Ico name="folder" size={14} className="text-brand" />
+          <span className="flex-1 truncate text-xs text-slate-200" title={scan.path}>{scan.path}</span>
+          <Btn variant="link" size="xs" title={t('folder.refresh')} onClick={() => scanFolder(scan.path, true)}><Ico name="refresh" size={12} /></Btn>
+          <Btn variant="ghost" size="xs" onClick={() => { setBrowsing(true); openFolder(scan.path); }}>{t('folder.change')}</Btn>
+        </div>
+      )}
+
+      {browsing && (
+        <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-2 space-y-2">
+          <p className="text-xs font-semibold text-slate-300">{t('folder.choose')}</p>
+          {browse && (
+            <div className="flex flex-wrap gap-1">
+              {browse.places.map(pl => (
+                <button key={pl.path} type="button" onClick={() => openFolder(pl.path)} title={pl.path}
+                  className="rounded-full border border-slate-700 bg-slate-800 px-2 py-0.5 text-xs text-slate-300 hover:border-slate-500">
+                  {placeName(pl)}
+                </button>
+              ))}
+            </div>
+          )}
+          <div className="flex gap-1.5">
+            <Btn variant="ghost" size="xs" title={t('folder.up')} disabled={!browse || !browse.parent} onClick={() => openFolder(browse.parent)}>↑</Btn>
+            <input value={pathInput} onChange={e => setPathInput(e.target.value)} placeholder={t('folder.path_ph')}
+              onKeyDown={e => { if (e.key === 'Enter') openFolder(pathInput); }}
+              className="flex-1 min-w-0 rounded-lg border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-slate-100 focus:outline-none focus:border-brand" />
+            <Btn variant="ghost" size="xs" onClick={() => openFolder(pathInput)}>{t('folder.go')}</Btn>
+          </div>
+          {browse && (
+            <div className="max-h-44 overflow-y-auto log-scroll rounded border border-slate-800">
+              {browse.folders.length === 0 && <p className="px-2 py-1.5 text-xs text-slate-500">{t('folder.no_subfolders')}</p>}
+              {browse.folders.map(f => (
+                <button key={f.path} type="button" onClick={() => openFolder(f.path)}
+                  className="flex w-full items-center gap-2 px-2 py-1 text-left text-xs text-slate-300 hover:bg-slate-800">
+                  <Ico name="folder" size={12} className="text-slate-500" /><span className="truncate">{f.name}</span>
+                </button>
+              ))}
+            </div>
+          )}
+          <div className="flex items-center gap-2">
+            <Btn size="sm" disabled={!browse} onClick={() => scanFolder(browse.path)}>
+              <Ico name="checkmark" size={12} />{t('folder.use')}
+            </Btn>
+            {browse && <span className="text-xs text-slate-500">{t('folder.here_count', { n: browse.video_count })}</span>}
+            {scan.path && <Btn variant="link" size="xs" className="ml-auto" onClick={() => setBrowsing(false)}>{t('site.cancel')}</Btn>}
+          </div>
+        </div>
+      )}
+
+      {error && <p className="text-xs text-red-300 flex gap-1.5"><Ico name="alert" size={12} className="mt-0.5" />{errText(error)}</p>}
+
+      <div className="flex flex-wrap gap-x-4 gap-y-1">
+        <label className="flex items-center gap-1.5 text-xs text-slate-300 cursor-pointer select-none">
+          <input type="checkbox" checked={!!prefs.folder_recursive} onChange={e => setPref('folder_recursive', e.target.checked)} className="accent-brand" />
+          {t('folder.recursive')}
+        </label>
+        <label className="flex items-center gap-1.5 text-xs text-slate-300 cursor-pointer select-none">
+          <input type="checkbox" checked={!!prefs.hide_sent} onChange={e => setPref('hide_sent', e.target.checked)} className="accent-brand" />
+          {t('folder.hide_sent')}
+        </label>
+      </div>
+
+      {scan.state === 'loading' && <p className="text-xs text-slate-400 inline-flex items-center gap-1.5"><Ico name="loader" size={12} className="animate-spin" />{t('folder.scanning')}</p>}
+
+      {!browsing && scan.state === 'ok' && (
+        videos.length === 0
+          ? <p className="text-xs text-slate-400">{t('folder.none')}</p>
+          : <div className="space-y-1.5">
+              <div className="flex items-center gap-1.5 text-xs">
+                <span className="text-slate-400 flex-1">{t('folder.count', { n: videos.length, s: selected.length })}</span>
+                <Btn variant="link" size="xs" onClick={() => setSelected(shown.filter(v => !v.queued).map(v => v.path))}>{t('folder.select_all')}</Btn>
+                <Btn variant="link" size="xs" onClick={() => setSelected(videos.filter(v => !v.sent && !v.queued).map(v => v.path))}>{t('folder.select_new')}</Btn>
+                <Btn variant="link" size="xs" onClick={() => setSelected([])}>{t('folder.select_none')}</Btn>
+              </div>
+              <div className="max-h-64 overflow-y-auto log-scroll rounded-lg border border-slate-800 divide-y divide-slate-800">
+                {shown.map(v => (
+                  <label key={v.path} className={cls('flex items-center gap-2 px-2 py-1.5 text-xs cursor-pointer hover:bg-slate-800/60', v.queued && 'opacity-50 cursor-not-allowed')}>
+                    <input type="checkbox" disabled={v.queued} checked={selected.includes(v.path)} onChange={() => toggle(v.path)} className="accent-brand" />
+                    <span className="flex-1 min-w-0">
+                      <span className="block truncate text-slate-200" title={v.rel}>{v.rel}</span>
+                      <span className="block text-slate-500">{fmtSize(v.size)} · {fmtDate(v.mtime)}</span>
+                    </span>
+                    {v.queued && <span className="rounded-full bg-amber-900/40 px-2 py-0.5 text-amber-300">{t('folder.queued')}</span>}
+                    {!v.queued && v.sent && <span className="rounded-full bg-emerald-900/40 px-2 py-0.5 text-emerald-300" title={'id ' + v.sent.videos_id}>{t('folder.sent', { date: fmtDate(v.sent.date) })}</span>}
+                  </label>
+                ))}
+              </div>
+              {scan.truncated && <p className="text-xs text-amber-300">{t('folder.truncated', { n: videos.length })}</p>}
+            </div>
+      )}
+    </div>
+  );
+}
+
 // ── Queue item ────────────────────────────────────────────────────────────
 function stageText(job) {
   const p = job.pct || {};
@@ -480,13 +727,25 @@ function TransferCard({ tr }) {
 
 // ── App ───────────────────────────────────────────────────────────────────
 function App() {
-  const [lang, setLang] = useLocalStorage('ave_lang', detectLang());
+  const [prefs, setPref] = usePrefs();
+  if (!prefs) {
+    return <div className="h-screen flex items-center justify-center text-slate-500"><Ico name="loader" size={24} className="animate-spin" /></div>;
+  }
+  return <Main prefs={prefs} setPref={setPref} />;
+}
+
+function Main({ prefs, setPref }) {
+  const lang = prefs.lang || detectLang();
+  const setLang = v => setPref('lang', v);
   LANG = LANGS.includes(lang) ? lang : 'en';
   useEffect(() => { document.documentElement.lang = LANG; }, [lang]);
 
-  // Sites (no passwords are stored: only the address, the user and the local session id)
-  const [sites, setSites] = useLocalStorage('ave_sites', []);
-  const [activeKey, setActiveKey] = useLocalStorage('ave_active_site', '');
+  // Sites: the address and user name are remembered (never the password); the local session id
+  // of each site stays in this browser.
+  const [sessions, setSessions] = useLocalStorage('ave_sessions', {});
+  const sites = (prefs.sites || []).map(s => ({ ...s, sessionId: sessions[siteKey(s)] || '' }));
+  const activeKey = prefs.active_site;
+  const setActiveKey = v => setPref('active_site', v);
   const [form, setForm] = useState({ url: '', user: '', password: '', sslVerify: true });
   const [showMore, setShowMore] = useState(false);
   const [conn, setConn] = useState({ state: 'none' });
@@ -494,19 +753,27 @@ function App() {
   const [logoOk, setLogoOk] = useState(true);
   const [categories, setCategories] = useState([]);
 
-  // Add form
-  const [tab, setTab] = useLocalStorage('ave_add_tab', 'link');
+  // Add form (remembered: tab, format, qualities, graphics card, advanced, category per site)
+  const tab = prefs.add_tab || 'link';
+  const setTab = v => setPref('add_tab', v);
   const [videoUrl, setVideoUrl] = useState('');
   const [preview, setPreview] = useState({ state: 'idle' });
   const [files, setFiles] = useState([]);
   const [title, setTitle] = useState('');
   const [desc, setDesc] = useState('');
-  const [catBySite, setCatBySite] = useLocalStorage('ave_cat_by_site', {});
-  const [format, setFormat] = useLocalStorage('ave_format', 'auto');
-  const [qualities, setQualities] = useLocalStorage('ave_qualities', []);
-  const [useGpu, setUseGpu] = useLocalStorage('ave_use_gpu', true);
-  const [showAdvanced, setShowAdvanced] = useLocalStorage('ave_show_advanced', false);
+  const catBySite = prefs.category_by_site || {};
+  const setCatBySite = v => setPref('category_by_site', v);
+  const format = prefs.format || 'auto';
+  const setFormat = v => setPref('format', v);
+  const qualities = prefs.qualities || [];
+  const setQualities = v => setPref('qualities', v);
+  const useGpu = prefs.use_gpu !== false;
+  const setUseGpu = v => setPref('use_gpu', v);
+  const showAdvanced = !!prefs.show_advanced;
+  const setShowAdvanced = v => setPref('show_advanced', v);
   const fileInput = useRef(null);
+  const [folderSel, setFolderSel] = useState([]);
+  const [folderRefresh, setFolderRefresh] = useState(0);
 
   // Queue
   const [jobs, setJobs] = useState([]);
@@ -531,13 +798,14 @@ function App() {
   }
 
   function updateSite(key, patch) {
-    setSites(prev => prev.map(s => (siteKey(s) === key ? { ...s, ...patch } : s)));
+    if ('sessionId' in patch) setSessions(prev => ({ ...prev, [key]: patch.sessionId }));
   }
 
   function applyConnection(data, base) {
-    const entry = { url: data.site.url, username: base.username, sslVerify: base.sslVerify, sessionId: data.session_id };
+    const entry = { url: data.site.url, username: base.username, sslVerify: base.sslVerify };
     const key = siteKey(entry);
-    setSites(prev => [entry, ...prev.filter(s => siteKey(s) !== key)]);
+    setPref('sites', prev => [entry, ...(prev || []).filter(s => siteKey(s) !== key)]);
+    setSessions(prev => ({ ...prev, [key]: data.session_id }));
     setActiveKey(key);
     setLogoOk(true);
     setConn({ state: 'ok', key, name: data.name, logoUrl: data.logo_url, site: data.site, sessionId: data.session_id });
@@ -589,7 +857,8 @@ function App() {
     if (!confirm(t('site.remove_confirm', { site: hostOf(s.url) }))) return;
     if (s.sessionId) { try { await api('/api/logout', { session_id: s.sessionId }); } catch {} }
     const key = siteKey(s);
-    setSites(prev => prev.filter(x => siteKey(x) !== key));
+    setPref('sites', prev => (prev || []).filter(x => siteKey(x) !== key));
+    setSessions(prev => { const next = { ...prev }; delete next[key]; return next; });
     if (key === activeKey) {
       setActiveKey('');
       setConn({ state: 'none' });
@@ -604,28 +873,9 @@ function App() {
     setEditing(true);
   }
 
-  // Start: move settings saved by older versions, reconnect to the last site, follow the queue.
+  // Start: reconnect to the last site and follow the queue.
   useEffect(() => {
-    let list = sites;
-    let active = activeKey;
-    try {
-      localStorage.removeItem('ave_password');
-      const oldUrl = JSON.parse(localStorage.getItem('ave_server_url') || 'null');
-      if (!list.length && oldUrl) {
-        const entry = {
-          url: normUrl(oldUrl),
-          username: JSON.parse(localStorage.getItem('ave_username') || '""'),
-          sslVerify: JSON.parse(localStorage.getItem('ave_ssl_verify') || 'true'),
-          sessionId: JSON.parse(localStorage.getItem('ave_session_id') || '""'),
-        };
-        list = [entry];
-        active = siteKey(entry);
-        setSites(list);
-        setActiveKey(active);
-      }
-      ['ave_server_url', 'ave_username', 'ave_ssl_verify', 'ave_session_id', 'ave_resolutions', 'ave_tab'].forEach(k => localStorage.removeItem(k));
-    } catch {}
-    const start = list.find(s => siteKey(s) === active) || list[0];
+    const start = sites.find(s => siteKey(s) === activeKey) || sites[0];
     if (start) selectSite(start); else setEditing(true);
 
     fetch('/api/version').then(r => r.json()).then(setVersionInfo).catch(() => {});
@@ -794,6 +1044,18 @@ function App() {
     if (!connected) return;
     askNotificationPermission();
     const opts = currentOptions();
+    if (tab === 'folder') {
+      try {
+        const r = await api('/api/import-local', { ...opts, paths: folderSel });
+        if (r.status === 401) { sessionExpired(); return; }
+        if (!r.ok) { showToast(errText(r.data && r.data.detail) || t('err.unknown', { detail: r.status })); return; }
+        const added = (r.data.job_ids || []).length, skipped = (r.data.skipped || []).length;
+        showToast(t('folder.added', { n: added }) + (skipped ? ' ' + t('folder.skipped', { n: skipped }) : ''));
+        setFolderSel([]); setDesc('');
+        setFolderRefresh(n => n + 1);
+      } catch { showToast(t('err.connection')); }
+      return;
+    }
     if (tab === 'link') {
       try {
         const r = await api('/api/import', { ...opts, url: videoUrl.trim(), title: title.trim() });
@@ -860,7 +1122,9 @@ function App() {
   }
 
   const blockedPreview = tab === 'link' && preview.state === 'error' && BLOCKING_PREVIEW.includes(preview.error && preview.error.code);
-  const canSubmit = connected && (tab === 'link' ? !!videoUrl.trim() && !blockedPreview : files.length > 0);
+  const canSubmit = connected && (tab === 'link' ? !!videoUrl.trim() && !blockedPreview
+    : tab === 'folder' ? folderSel.length > 0 : files.length > 0);
+  const submitCount = tab === 'folder' ? folderSel.length : tab === 'files' ? files.length : 1;
   const catOptions = [{ value: '0', label: t('add.category_none') }, ...categories.map(c => ({ value: String(c.id), label: c.name }))];
   const siteRes = site.resolutions || [];
   const gpu = system && system.gpu;
@@ -917,7 +1181,7 @@ function App() {
               {!connected && <p className="text-xs text-amber-300 mb-3 inline-flex items-center gap-1.5"><Ico name="info" size={12} />{t('site.connect_first')}</p>}
 
               <div className="flex gap-1 mb-3 rounded-lg bg-slate-800/60 p-1 w-fit">
-                {[['link', 'link', t('add.tab_link')], ['files', 'upload', t('add.tab_files')]].map(([key, icon, label]) => (
+                {[['link', 'link', t('add.tab_link')], ['files', 'upload', t('add.tab_files')], ['folder', 'folder', t('add.tab_folder')]].map(([key, icon, label]) => (
                   <button key={key} type="button" onClick={() => setTab(key)}
                     className={cls('inline-flex items-center gap-1.5 rounded-md px-4 py-1.5 text-xs font-semibold transition',
                       tab === key ? 'bg-brand text-white shadow' : 'text-slate-400 hover:text-slate-200')}>
@@ -944,6 +1208,9 @@ function App() {
                       </div>
                     )}
                   </div>
+                ) : tab === 'folder' ? (
+                  <FolderPanel prefs={prefs} setPref={setPref} siteUrl={connected ? site.url : ''}
+                    selected={folderSel} setSelected={setFolderSel} refreshKey={folderRefresh} />
                 ) : (
                   <div className="space-y-2">
                     <div onClick={() => fileInput.current && fileInput.current.click()}
@@ -966,7 +1233,7 @@ function App() {
                   </div>
                 )}
 
-                {tab === 'files' && files.length > 1
+                {(tab === 'files' && files.length > 1) || tab === 'folder'
                   ? <p className="text-xs text-slate-400">{t('add.title_multi')}</p>
                   : <Input label={t('add.title')} value={title} onChange={setTitle}
                       placeholder={tab === 'link' && preview.state === 'ok' ? preview.data.title : t('add.title_auto')} />}
@@ -1037,7 +1304,7 @@ function App() {
                 </div>
 
                 <Btn variant="success" size="md" className="w-full" onClick={submit} disabled={!canSubmit}>
-                  <Ico name="plus" />{tab === 'files' && files.length > 1 ? t('add.submit_n', { n: files.length }) : t('add.submit')}
+                  <Ico name="plus" />{submitCount > 1 ? t('add.submit_n', { n: submitCount }) : t('add.submit')}
                 </Btn>
               </div>
             </Card>

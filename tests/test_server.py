@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import queue
 import threading
 import time
@@ -81,6 +82,8 @@ def _isolated_state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setattr("local_encoder.server._info_cache", {})
     monkeypatch.setattr("local_encoder.server._work_queue", queue.Queue())
     monkeypatch.setattr("local_encoder.server._notifier", None)
+    monkeypatch.setattr("local_encoder.history._HISTORY_FILE", tmp_path / "history.jsonl")
+    monkeypatch.setattr("local_encoder.settings._SETTINGS_FILE", tmp_path / "settings.json")
     return out
 
 
@@ -793,3 +796,134 @@ def test_stop_running_jobs_cancels_everything() -> None:
     assert waiting.status == "cancelled"
     assert running.cancel_event.is_set()
     assert running.status == "cancelled"
+
+
+# ---------------------------------------------------------------------------
+# Videos already on this computer (folder tab)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture()
+def video_folder(tmp_path: Path) -> Path:
+    folder = tmp_path / "Videos"
+    folder.mkdir()
+    (folder / "one.mp4").write_bytes(b"x")
+    (folder / "two.mkv").write_bytes(b"xx")
+    (folder / "readme.txt").write_text("no")
+    return folder
+
+
+def test_scan_marks_videos_already_sent_to_this_site(video_folder: Path) -> None:
+    from local_encoder import history
+
+    history.update_entry(
+        history.HistoryEntry(
+            id="h1",
+            url=str((video_folder / "one.mp4").resolve()),
+            server="https://avideo.example.com/",
+            username="alice",
+            status="success",
+            videos_id=5,
+        )
+    )
+    data = client.post(
+        "/api/folders/scan",
+        json={"path": str(video_folder), "site_url": "https://avideo.example.com/"},
+    ).json()
+
+    by_name = {v["name"]: v for v in data["videos"]}
+    assert set(by_name) == {"one.mp4", "two.mkv"}
+    assert by_name["one.mp4"]["sent"]["videos_id"] == 5
+    assert by_name["two.mkv"]["sent"] is None
+
+    other_site = client.post(
+        "/api/folders/scan", json={"path": str(video_folder), "site_url": "https://other.example/"}
+    ).json()
+    assert all(v["sent"] is None for v in other_site["videos"])
+
+
+def test_scan_unknown_folder_returns_code(tmp_path: Path) -> None:
+    resp = client.post("/api/folders/scan", json={"path": str(tmp_path / "nope")})
+    assert resp.status_code == 400
+    assert resp.json()["detail"]["code"] == "folder_not_found"
+
+
+def test_browse_folder_lists_subfolders(video_folder: Path) -> None:
+    (video_folder / "Trips").mkdir()
+    data = client.post("/api/folders/browse", json={"path": str(video_folder)}).json()
+    assert [f["name"] for f in data["folders"]] == ["Trips"]
+    assert data["video_count"] == 2
+
+
+def test_import_local_queues_videos_where_they_are(session_id: str, video_folder: Path) -> None:
+    paths = [str(video_folder / "one.mp4"), str(video_folder / "readme.txt")]
+    data = client.post(
+        "/api/import-local",
+        json={"session_id": session_id, "paths": paths, "format": "mp4", "use_gpu": False},
+    ).json()
+
+    assert len(data["job_ids"]) == 1
+    assert data["skipped"][0]["error"]["code"] == "file_not_video"
+    job = server._jobs[data["job_ids"][0]]
+    assert job.kind == "local"
+    assert job.raw_file == (video_folder / "one.mp4").resolve()
+    assert job.title == "one"
+    assert job.options.fmt == "mp4"
+    # The same video is not queued twice, and the scan shows it as queued.
+    again = client.post("/api/import-local", json={"session_id": session_id, "paths": paths[:1]})
+    assert again.json()["job_ids"] == []
+    scan = client.post("/api/folders/scan", json={"path": str(video_folder)}).json()
+    assert {v["name"]: v["queued"] for v in scan["videos"]}["one.mp4"] is True
+
+
+def test_import_local_requires_session(monkeypatch: pytest.MonkeyPatch, video_folder: Path) -> None:
+    monkeypatch.setattr("local_encoder.server._sessions", {})
+    resp = client.post(
+        "/api/import-local", json={"session_id": "x", "paths": [str(video_folder / "one.mp4")]}
+    )
+    assert resp.status_code == 401
+
+
+def test_local_job_keeps_the_original_and_is_remembered(
+    session_id: str, video_folder: Path
+) -> None:
+    from local_encoder import history
+
+    data = client.post(
+        "/api/import-local",
+        json={"session_id": session_id, "paths": [str(video_folder / "two.mkv")]},
+    ).json()
+    job = server._jobs[data["job_ids"][0]]
+    job.work_dir.mkdir(parents=True)
+
+    def done(j: server.Job) -> None:
+        j.videos_id = 77
+        j.emit("done", {"videos_id": 77})
+
+    with patch("local_encoder.server._pipeline", side_effect=done):
+        server._run_job(job)
+
+    assert (video_folder / "two.mkv").exists()  # never deleted: it is the user's file
+    assert not job.work_dir.exists()
+    sent = history.sent_items("https://avideo.example.com")
+    entry = sent[os.path.normcase(str((video_folder / "two.mkv").resolve()))]
+    assert entry.videos_id == 77
+
+
+# ---------------------------------------------------------------------------
+# Remembered choices
+# ---------------------------------------------------------------------------
+
+
+def test_settings_round_trip() -> None:
+    assert client.get("/api/settings").json()["saved"] is False
+    saved = client.post("/api/settings", json={"folder": "D:\Videos", "format": "hls"}).json()
+    assert saved["format"] == "hls"
+    data = client.get("/api/settings").json()
+    assert data["folder"] == "D:\Videos"
+    assert data["saved"] is True
+
+
+def test_settings_cannot_be_changed_by_another_site() -> None:
+    plain = TestClient(app, base_url="http://127.0.0.1:47800")
+    assert plain.post("/api/settings", json={"format": "mp4"}).status_code == 403

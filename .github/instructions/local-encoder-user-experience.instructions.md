@@ -62,7 +62,10 @@ keep the app usable by that person without reading documentation.
   page as codes (`err.<code>` from `errors.py`, `notice.<code>`), not as English sentences; the
   technical log stays English and is shown only under “Details”.
 - The page is a guided flow: step 1 connects (saved sites, never the password), step 2 adds
-  videos; advanced options stay collapsed. Each job offers the next action (Try again, Connect
+  videos (link, files, or a folder of the computer); advanced options stay collapsed. Choices the
+  user would otherwise repeat (language, sites, tab, last folder, format, qualities, options) are
+  remembered server-side (`settings.py`, `/api/settings`), not only in `localStorage`, which
+  is per port and per browser. Each job offers the next action (Try again, Connect
   again, Open folder, Report a problem) instead of only an error text.
 
 ## CLI (`local_encoder/cli.py`)
