@@ -44,6 +44,9 @@ _STREAM_PIECE = 1024 * 1024
 # Retries per chunk before falling back to a multipart upload (PHP: MAX_CHUNK_SEND_RETRIES)
 MAX_CHUNK_RETRIES = 6
 
+# A completion hook may still hold the site's lock after an earlier request timed out.
+MAX_COMPLETION_RETRIES = 3
+
 # AVideo recognises encoder traffic by "AVideoEncoder" in the User-Agent
 # (isAVideoUserAgent()). Without it the chunk endpoint refuses the request and sites that
 # require login redirect the public config endpoints to the login page.
@@ -776,17 +779,29 @@ class AVideoClient:
             "fail": "1" if failed else "0",
             "return_vars": self._return_vars(),
         }
-        logger.debug("POST notify_done videos_id=%d fail=%s", videos_id, failed)
-        resp = self._http.post(
-            self._url("objects/aVideoEncoderNotifyIsDone.json.php"),
-            data=data,
-        )
-        self._check_status(resp, "finishing the upload")
-        result = self._json(resp, "finishing the upload")
-        if not isinstance(result, dict):
-            result = {}
-        logger.debug("notify_done response: %s", result)
-        return result
+        for attempt in range(MAX_COMPLETION_RETRIES + 1):
+            logger.debug("POST notify_done videos_id=%d fail=%s", videos_id, failed)
+            resp = self._http.post(
+                self._url("objects/aVideoEncoderNotifyIsDone.json.php"),
+                data=data,
+            )
+            self._check_status(resp, "finishing the upload")
+            result = self._json(resp, "finishing the upload")
+            if not isinstance(result, dict):
+                result = {}
+            if result.get("error") is False:
+                return result
+            code = "completion_failed"
+            if result.get("code") == "completion_in_progress":
+                code = "completion_in_progress"
+                if not failed and attempt < MAX_COMPLETION_RETRIES:
+                    _sleep(2 ** (attempt + 1))
+                    continue
+            raise AVideoAPIError(
+                "The site has not confirmed that the video is complete. Try again shortly.",
+                code=code,
+            )
+        raise AssertionError("Completion retry loop did not return or raise")
 
     def notify_failed(self, videos_id: int, video_id_hash: str) -> None:
         """Best-effort ``fail=1`` so the site does not keep the video in "encoding" forever."""

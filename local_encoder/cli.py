@@ -509,11 +509,8 @@ def import_video(
 
                     # 5e. Notify encoding done
                     rpt.info("Notifying AVideo that encoding is complete…")
-                    done_result = client.notify_done(reg.videos_id, reg.video_id_hash)
-                    if done_result.get("error"):
-                        rpt.warning(f"Notify-done error: {done_result.get('msg', 'unknown')}")
-                    else:
-                        rpt.success(f"Done! Video is live: {cfg.server_url}video/{reg.videos_id}")
+                    client.notify_done(reg.videos_id, reg.video_id_hash)
+                    rpt.success(f"Done! Video is live: {cfg.server_url}video/{reg.videos_id}")
 
                 except BaseException:
                     client.notify_failed(reg.videos_id, reg.video_id_hash)

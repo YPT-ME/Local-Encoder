@@ -78,6 +78,17 @@ MESSAGES: dict[str, str] = {
     "site_error": "The site reported a problem: {detail}",
     "register_failed": "The site did not create the video: {detail}",
     "save_failed": "The site could not save the file: {detail}",
+    "completion_failed": (
+        "The site received the files but did not confirm completion. Your converted files "
+        "are kept. Try again; if it keeps failing, ask the site administrator to check the video."
+    ),
+    "completion_in_progress": (
+        "The site is still finishing this video. Your converted files are kept. "
+        "Wait a little, then try again."
+    ),
+    "file_receive_failed": (
+        "Local Encoder could not receive the file. It is still selected. Try adding it again."
+    ),
     "file_too_large": (
         "The file is larger than this site accepts. Ask the site administrator to raise the "
         "upload limit."

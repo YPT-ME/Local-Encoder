@@ -59,8 +59,10 @@ end-to-end run.
   (Streamer at `https://vlu.me/`, PHP Encoder at `https://vlu.me/Encoder/`). The repository is
   bind-mounted into the container (`./` → `/var/www/html/AVideo`, `.compose/encoder` →
   `/var/www/html/AVideo/Encoder`), so PHP edits there are live without rebuilding.
-- `vlu.me` resolves to a LAN IP via the hosts file and uses a self-signed/local certificate: pass
-  `--ssl-no-verify` (CLI) or untick SSL verification (web UI) when testing against it.
+- `vlu.me` resolves to a LAN IP via the hosts file. Keep TLS verification enabled: the normal
+  verified HTTPS request succeeded on this machine on 2026-10-15. Check the certificate before
+  assuming it is self-signed or untrusted. Use `--ssl-no-verify` (CLI) or untick SSL verification
+  (web UI) only when the user explicitly chooses it for a verified certificate problem.
 - AVideo treats requests differently by User-Agent: `curl`'s default UA gets `Bot Found [curl]`
   (`$global['stopBotsList']`), and a browser UA gets a 302 to the login page on vlu.me. For manual
   probes of encoder endpoints use an encoder UA: `curl -sk -A "AVideoEncoder test" ...`. If an
@@ -68,7 +70,7 @@ end-to-end run.
 - Ask the user for test credentials; never hardcode them, never commit them, never print them.
 - Typical run (from this repo):
   ```bash
-  local-encoder import "<url or file>" --server https://vlu.me/ --user <user> --password <pass> --ssl-no-verify --format mp4
+  local-encoder import "<url or file>" --server https://vlu.me/ --user <user> --format mp4
   local-encoder serve --no-browser  # http://127.0.0.1:47800 (another free port if busy)
   ```
 - After the run, verify on the site: the video exists, plays, has the right title/description/

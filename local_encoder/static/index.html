@@ -167,6 +167,9 @@ function normUrl(u) {
 }
 const siteKey = s => `${s.url}|${s.username}`;
 const hostOf = u => { try { return new URL(u).host; } catch { return u; } };
+function jobAccountMatches(job, site) {
+  return site.url === job.site_url && site.username === job.username;
+}
 const resLabel = r => (r >= 2160 ? '4K' : r + 'p');
 function fmtDuration(s) {
   s = Math.round(s || 0);
@@ -435,7 +438,7 @@ function fmtDate(epochOrIso) {
   return isNaN(d) ? '' : d.toLocaleDateString(LANG);
 }
 
-function FolderPanel({ prefs, setPref, siteUrl, selected, setSelected, refreshKey }) {
+function FolderPanel({ prefs, setPref, siteUrl, username, selected, setSelected, refreshKey }) {
   const [browsing, setBrowsing] = useState(!prefs.folder);
   const [browse, setBrowse] = useState(null);
   const [pathInput, setPathInput] = useState(prefs.folder || '');
@@ -464,7 +467,7 @@ function FolderPanel({ prefs, setPref, siteUrl, selected, setSelected, refreshKe
     setScan(prev => ({ ...prev, state: 'loading' }));
     setError(null);
     try {
-      const r = await api('/api/folders/scan', { path, recursive: !!prefs.folder_recursive, site_url: siteUrl || '' });
+      const r = await api('/api/folders/scan', { path, recursive: !!prefs.folder_recursive, site_url: siteUrl || '', username: username || '' });
       if (!r.ok) { setScan({ state: 'idle' }); setError((r.data && r.data.detail) || { code: 'unknown' }); setBrowsing(true); return; }
       const found = r.data;
       setScan({ state: 'ok', ...found });
@@ -483,7 +486,7 @@ function FolderPanel({ prefs, setPref, siteUrl, selected, setSelected, refreshKe
   useEffect(() => {
     if (prefs.folder) scanFolder(prefs.folder, refreshKey > 0);
     else openFolder('');
-  }, [siteUrl, prefs.folder_recursive, refreshKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [siteUrl, username, prefs.folder_recursive, refreshKey]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (browsing && !browse) openFolder(prefs.folder || ''); }, [browsing]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const videos = scan.state === 'ok' || scan.videos ? (scan.videos || []) : [];
@@ -649,7 +652,7 @@ function JobCard({ job, onAction, expanded, onToggle }) {
               {job.status === 'running' && <Ico name="loader" size={10} className="animate-spin mr-1" />}
               {t('status.' + job.status)}
             </span>
-            <span className="inline-flex items-center gap-1"><Ico name="globe" size={11} />{job.site}</span>
+            <span className="inline-flex items-center gap-1"><Ico name="globe" size={11} />{job.site}{job.username ? ' · ' + job.username : ''}</span>
             {info.duration_s > 0 && <span className="inline-flex items-center gap-1"><Ico name="timer" size={11} />{fmtDuration(info.duration_s)}</span>}
             {info.file_size_bytes > 0 && <span className="inline-flex items-center gap-1"><Ico name="hdd" size={11} />{fmtSize(info.file_size_bytes)}</span>}
           </div>
@@ -759,6 +762,9 @@ function Main({ prefs, setPref }) {
   const [videoUrl, setVideoUrl] = useState('');
   const [preview, setPreview] = useState({ state: 'idle' });
   const [files, setFiles] = useState([]);
+  const [fileError, setFileError] = useState(null);
+  const [submitting, setSubmitting] = useState(false);
+  const submittingRef = useRef(false);
   const [title, setTitle] = useState('');
   const [desc, setDesc] = useState('');
   const catBySite = prefs.category_by_site || {};
@@ -802,13 +808,13 @@ function Main({ prefs, setPref }) {
   }
 
   function applyConnection(data, base) {
-    const entry = { url: data.site.url, username: base.username, sslVerify: base.sslVerify };
+    const entry = { url: data.site.url, username: data.username || base.username, sslVerify: base.sslVerify };
     const key = siteKey(entry);
     setPref('sites', prev => [entry, ...(prev || []).filter(s => siteKey(s) !== key)]);
     setSessions(prev => ({ ...prev, [key]: data.session_id }));
     setActiveKey(key);
     setLogoOk(true);
-    setConn({ state: 'ok', key, name: data.name, logoUrl: data.logo_url, site: data.site, sessionId: data.session_id });
+    setConn({ state: 'ok', key, username: entry.username, name: data.name, logoUrl: data.logo_url, site: data.site, sessionId: data.session_id });
     const cats = data.categories || [];
     setCategories(cats);
     setCatBySite(prev => (cats.some(c => String(c.id) === String(prev[key])) ? prev : { ...prev, [key]: '0' }));
@@ -1029,45 +1035,61 @@ function Main({ prefs, setPref }) {
       xhr.upload.onprogress = e => {
         if (e.lengthComputable) setTransfers(prev => prev.map(x => (x.id === id ? { ...x, pct: Math.round(e.loaded * 100 / e.total) } : x)));
       };
-      const finish = () => { setTransfers(prev => prev.filter(x => x.id !== id)); resolve(); };
+      const finish = ok => { setTransfers(prev => prev.filter(x => x.id !== id)); resolve(ok); };
       xhr.onload = () => {
-        if (xhr.status === 401) sessionExpired();
-        else if (xhr.status >= 400) showToast(t('err.unknown', { detail: `HTTP ${xhr.status}` }));
-        finish();
+        let data = null;
+        try { data = JSON.parse(xhr.responseText); } catch {}
+        const ok = xhr.status >= 200 && xhr.status < 300 && !!(data && data.job_id);
+        if (xhr.status === 401) {
+          sessionExpired();
+          setFileError({ code: 'session_expired' });
+        } else if (!ok) setFileError({ code: 'file_receive_failed' });
+        finish(ok);
       };
-      xhr.onerror = () => { showToast(t('err.connection')); finish(); };
+      xhr.onerror = () => { setFileError({ code: 'connection' }); finish(false); };
       xhr.send(fd);
     });
   }
 
   async function submit() {
-    if (!connected) return;
-    askNotificationPermission();
-    const opts = currentOptions();
-    if (tab === 'folder') {
-      try {
-        const r = await api('/api/import-local', { ...opts, paths: folderSel });
-        if (r.status === 401) { sessionExpired(); return; }
-        if (!r.ok) { showToast(errText(r.data && r.data.detail) || t('err.unknown', { detail: r.status })); return; }
-        const added = (r.data.job_ids || []).length, skipped = (r.data.skipped || []).length;
-        showToast(t('folder.added', { n: added }) + (skipped ? ' ' + t('folder.skipped', { n: skipped }) : ''));
-        setFolderSel([]); setDesc('');
-        setFolderRefresh(n => n + 1);
-      } catch { showToast(t('err.connection')); }
-      return;
-    }
-    if (tab === 'link') {
-      try {
-        const r = await api('/api/import', { ...opts, url: videoUrl.trim(), title: title.trim() });
-        if (r.status === 401) { sessionExpired(); return; }
-        if (!r.ok) { showToast((r.data && r.data.detail) || t('err.unknown', { detail: r.status })); return; }
-        setVideoUrl(''); setTitle(''); setDesc('');
-      } catch { showToast(t('err.connection')); }
-    } else {
-      const list = files;
-      const fileTitle = list.length === 1 ? title.trim() : '';
-      setFiles([]); setTitle(''); setDesc('');
-      for (const f of list) await sendFile(f, fileTitle, opts); // one at a time
+    if (!connected || submittingRef.current) return;
+    submittingRef.current = true;
+    setSubmitting(true);
+    setFileError(null);
+    try {
+      askNotificationPermission();
+      const opts = currentOptions();
+      if (tab === 'folder') {
+        try {
+          const r = await api('/api/import-local', { ...opts, paths: folderSel });
+          if (r.status === 401) { sessionExpired(); return; }
+          if (!r.ok) { showToast(errText(r.data && r.data.detail) || t('err.unknown', { detail: r.status })); return; }
+          const added = (r.data.job_ids || []).length, skipped = (r.data.skipped || []).length;
+          showToast(t('folder.added', { n: added }) + (skipped ? ' ' + t('folder.skipped', { n: skipped }) : ''));
+          setFolderSel([]); setDesc('');
+          setFolderRefresh(n => n + 1);
+        } catch { showToast(t('err.connection')); }
+        return;
+      }
+      if (tab === 'link') {
+        try {
+          const r = await api('/api/import', { ...opts, url: videoUrl.trim(), title: title.trim() });
+          if (r.status === 401) { sessionExpired(); return; }
+          if (!r.ok) { showToast((r.data && r.data.detail) || t('err.unknown', { detail: r.status })); return; }
+          setVideoUrl(''); setTitle(''); setDesc('');
+        } catch { showToast(t('err.connection')); }
+      } else {
+        const list = [...files];
+        const fileTitle = list.length === 1 ? title.trim() : '';
+        for (const f of list) {
+          if (!await sendFile(f, fileTitle, opts)) return;
+          setFiles(prev => prev.filter(file => file !== f));
+        }
+        setTitle(''); setDesc('');
+      }
+    } finally {
+      submittingRef.current = false;
+      setSubmitting(false);
     }
   }
 
@@ -1088,13 +1110,12 @@ function Main({ prefs, setPref }) {
         if (job.status === 'running' && !confirm(t('job.cancel_confirm'))) return;
         await api(`${path}/cancel`);
       } else if (action === 'retry') {
-        const saved = sites.find(s => s.url === job.site_url && s.sessionId);
-        const sid = connected && site.url === job.site_url ? conn.sessionId : (saved ? saved.sessionId : '');
+        const saved = sites.find(s => jobAccountMatches(job, s) && s.sessionId);
+        const sid = connected && jobAccountMatches(job, { url: site.url, username: conn.username }) ? conn.sessionId : (saved ? saved.sessionId : '');
         const r = await api(`${path}/retry`, { session_id: sid });
         if (r.status === 401 || r.status === 400) {
-          showToast(t('toast.reconnect', { site: job.site }));
-          const s = sites.find(x => x.url === job.site_url);
-          if (s) selectSite(s);
+          showToast(t('toast.reconnect', { site: job.site, user: job.username }));
+          reconnectJob(job);
         }
       } else if (action === 'remove') {
         if (job.status !== 'done' && job.has_files && !confirm(t('job.remove_confirm'))) return;
@@ -1107,12 +1128,17 @@ function Main({ prefs, setPref }) {
         await navigator.clipboard.writeText(job.result.url);
         showToast(t('job.copied'), 2500);
       } else if (action === 'reconnect') {
-        const s = sites.find(x => x.url === job.site_url);
-        if (s) { setForm({ url: s.url, user: s.username, password: '', sslVerify: s.sslVerify !== false }); setActiveKey(siteKey(s)); setConn({ state: 'none', hintUser: s.username }); }
-        else setForm(f => ({ ...f, url: job.site_url, password: '' }));
-        setEditing(true);
+        reconnectJob(job);
       }
     } catch { showToast(t('err.connection')); }
+  }
+
+  function reconnectJob(job) {
+    const saved = sites.find(s => jobAccountMatches(job, s));
+    setForm({ url: job.site_url, user: job.username, password: '', sslVerify: !saved || saved.sslVerify !== false });
+    setActiveKey(`${job.site_url}|${job.username}`);
+    setConn({ state: 'none', hintUser: job.username });
+    setEditing(true);
   }
 
   async function clearDone() {
@@ -1122,7 +1148,7 @@ function Main({ prefs, setPref }) {
   }
 
   const blockedPreview = tab === 'link' && preview.state === 'error' && BLOCKING_PREVIEW.includes(preview.error && preview.error.code);
-  const canSubmit = connected && (tab === 'link' ? !!videoUrl.trim() && !blockedPreview
+  const canSubmit = connected && !submitting && (tab === 'link' ? !!videoUrl.trim() && !blockedPreview
     : tab === 'folder' ? folderSel.length > 0 : files.length > 0);
   const submitCount = tab === 'folder' ? folderSel.length : tab === 'files' ? files.length : 1;
   const catOptions = [{ value: '0', label: t('add.category_none') }, ...categories.map(c => ({ value: String(c.id), label: c.name }))];
@@ -1209,7 +1235,7 @@ function Main({ prefs, setPref }) {
                     )}
                   </div>
                 ) : tab === 'folder' ? (
-                  <FolderPanel prefs={prefs} setPref={setPref} siteUrl={connected ? site.url : ''}
+                  <FolderPanel prefs={prefs} setPref={setPref} siteUrl={connected ? site.url : ''} username={connected ? conn.username : ''}
                     selected={folderSel} setSelected={setFolderSel} refreshKey={folderRefresh} />
                 ) : (
                   <div className="space-y-2">
@@ -1230,6 +1256,7 @@ function Main({ prefs, setPref }) {
                           className="p-0.5 text-slate-500 hover:text-red-400"><Ico name="x" size={12} /></button>
                       </div>
                     ))}
+                    {fileError && <p className="text-xs text-red-300 flex gap-1.5"><Ico name="alert" size={12} />{errText(fileError)}</p>}
                   </div>
                 )}
 
@@ -1304,7 +1331,7 @@ function Main({ prefs, setPref }) {
                 </div>
 
                 <Btn variant="success" size="md" className="w-full" onClick={submit} disabled={!canSubmit}>
-                  <Ico name="plus" />{submitCount > 1 ? t('add.submit_n', { n: submitCount }) : t('add.submit')}
+                  <Ico name={submitting ? 'loader' : 'plus'} className={submitting ? 'animate-spin' : ''} />{submitting ? t('add.adding') : submitCount > 1 ? t('add.submit_n', { n: submitCount }) : t('add.submit')}
                 </Btn>
               </div>
             </Card>

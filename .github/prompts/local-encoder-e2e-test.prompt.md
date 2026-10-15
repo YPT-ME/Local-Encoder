@@ -13,12 +13,16 @@ Scope: **{{TEST_SCOPE}}**
 
 - Unit checks pass first: `pytest`, `ruff check .`, `ruff format --check .`, `mypy local_encoder`.
 - Target site: https://vlu.me/ unless another is given. Check it answers:
-  `curl -sk -A "AVideoEncoder e2e" -o /dev/null -w "%{http_code}\n" https://vlu.me/status`
+  `curl -s -A "AVideoEncoder e2e" -o /dev/null -w "%{http_code}\n" https://vlu.me/status`
   (expect `200`). Plain `curl` is blocked by the bot filter; a browser UA gets a login redirect.
   If the site is down, ask the user to start the Docker stack in `D:\git\htdocs\AVideo\`
   (`docker compose up -d`); do not start/stop containers without asking.
-- Credentials: ask the user for a test account (an uploader, and an admin if the test needs it).
-  Never print, log, commit or store them in files.
+- Credentials: use the user-provided test account or the user's authorized local credential
+  store; ask only if neither is available (an uploader, and an admin if the test needs it).
+  Never print credentials, put them in process arguments, log, commit or store them in files.
+- Keep TLS verification enabled. `vlu.me` worked with normal certificate verification on this
+  machine on 2026-10-15; check before assuming otherwise. Disabling verification requires the
+  user's explicit choice for a confirmed certificate problem.
 - FFmpeg/FFprobe available (`bin/`, `FFMPEG_BIN`/`FFPROBE_BIN`, or PATH).
 - Use a small test input (a few seconds; one landscape, one vertical, one audio-only, one with two
   audio tracks when relevant) so the run is fast.
@@ -27,10 +31,12 @@ Scope: **{{TEST_SCOPE}}**
 
 CLI (URL import):
 ```bash
-local-encoder import "<url>" --server https://vlu.me/ --user <user> --password <pass> --ssl-no-verify --format <auto|mp4|hls> [--resolution <max>] [--keep-files]
+local-encoder import "<url>" --server https://vlu.me/ --user <user> --format <auto|mp4|hls> [--resolution <max>] [--keep-files]
 ```
+Supply `AVIDEO_PASSWORD` only as an in-memory environment value retrieved from the user's
+authorized credential store; never echo it or save it in a file.
 Web UI: `local-encoder serve --no-browser`, open the address it prints (default
-http://127.0.0.1:47800), untick *Verify SSL* for vlu.me, click *Connect*, then import a URL or a
+http://127.0.0.1:47800), keep certificate verification enabled, click *Connect*, then import a URL or a
 local file. To test a release build, run the same steps with the packaged `LocalEncoder`
 executable (`docs/releasing.md`).
 

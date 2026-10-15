@@ -524,6 +524,38 @@ def test_retry_reuses_converted_files_and_the_same_video(tmp_path: Path) -> None
     assert mock_client.register_video.call_args.kwargs["videos_id"] == 9
 
 
+def test_retry_reencodes_when_the_site_changes_qualities(tmp_path: Path) -> None:
+    mock_client = _mock_client()
+    job = _job(fmt="mp4")
+    mock_client.upload_file.side_effect = AVideoAPIError("connection lost")
+    with pytest.raises(AVideoAPIError):
+        _run(job, mock_client, tmp_path)
+    job.session.login.allowed_resolutions = [360]
+    mock_client.upload_file.side_effect = None
+
+    mocks = _run(job, mock_client, tmp_path)
+
+    assert mocks["encode_mp4_multi"].call_args.kwargs["resolutions"] == [360]
+
+
+def test_failed_completion_keeps_work_and_never_reports_success(tmp_path: Path) -> None:
+    mock_client = _mock_client()
+    mock_client.notify_done.side_effect = AVideoAPIError("Not completed", code="completion_failed")
+    job = _job(fmt="mp4")
+    job.work_dir.mkdir(parents=True)
+    kept = job.work_dir / "converted.mp4"
+    kept.write_bytes(b"video")
+    with ExitStack() as stack:
+        for p in _pipeline_patches(mock_client, tmp_path):
+            stack.enter_context(p)
+        server._run_job(job)
+
+    assert job.status == "error"
+    assert job.result is None
+    assert job.error is not None and job.error["code"] == "completion_failed"
+    assert kept.exists()
+
+
 def test_cancel_during_upload_stops_and_notifies_failure(tmp_path: Path) -> None:
     mock_client = _mock_client()
     job = _job(fmt="mp4")
@@ -694,6 +726,30 @@ def test_retry_refuses_a_session_of_another_site(monkeypatch: pytest.MonkeyPatch
     job = _job()
     job.emit("error", {"code": "x"})
     assert client.post(f"/api/jobs/{job.id}/retry", json={"session_id": "s"}).status_code == 400
+
+
+@pytest.mark.parametrize(("username", "user_id"), [("bob", 8), ("alice", 8), ("bob", 7)])
+def test_retry_refuses_a_different_account(
+    monkeypatch: pytest.MonkeyPatch, username: str, user_id: int
+) -> None:
+    login = _login()
+    login.username, login.user_id = username, user_id
+    monkeypatch.setattr(server, "_sessions", {"other": _session(login)})
+    job = _job()
+    job.status = "error"
+    original = job.session
+
+    response = client.post(f"/api/jobs/{job.id}/retry", json={"session_id": "other"})
+
+    assert response.status_code == 400
+    assert job.session is original
+    assert job.status == "error"
+
+
+def test_job_summary_identifies_the_account() -> None:
+    summary = _job().summary()
+    assert summary["username"] == "alice"
+    assert summary["user_id"] == 7
 
 
 def test_remove_job_deletes_its_files() -> None:
@@ -882,6 +938,74 @@ def test_import_local_requires_session(monkeypatch: pytest.MonkeyPatch, video_fo
         "/api/import-local", json={"session_id": "x", "paths": [str(video_folder / "one.mp4")]}
     )
     assert resp.status_code == 401
+
+
+def test_import_local_does_not_drop_files_above_500(session_id: str, tmp_path: Path) -> None:
+    paths = []
+    for index in range(501):
+        path = tmp_path / f"video-{index}.mp4"
+        path.write_bytes(b"video")
+        paths.append(str(path))
+
+    response = client.post("/api/import-local", json={"session_id": session_id, "paths": paths})
+
+    assert response.status_code == 200
+    assert len(response.json()["job_ids"]) == 501
+    assert response.json()["skipped"] == []
+
+
+def test_local_file_can_be_queued_for_another_site(
+    session_id: str, video_folder: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = str(video_folder / "one.mp4")
+    client.post("/api/import-local", json={"session_id": session_id, "paths": [path]})
+    other = server._Session("https://other.example/", True, _login(), time.time())
+    monkeypatch.setitem(server._sessions, "other", other)
+
+    scan = client.post(
+        "/api/folders/scan",
+        json={"path": str(video_folder), "site_url": other.server_url, "username": "alice"},
+    ).json()
+    assert not any(v["queued"] for v in scan["videos"])
+    response = client.post("/api/import-local", json={"session_id": "other", "paths": [path]})
+    assert len(response.json()["job_ids"]) == 1
+
+
+def test_local_file_can_be_queued_for_another_account(
+    session_id: str, video_folder: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = str(video_folder / "one.mp4")
+    client.post("/api/import-local", json={"session_id": session_id, "paths": [path]})
+    login = _login()
+    login.username, login.user_id = "bob", 8
+    monkeypatch.setitem(server._sessions, "bob", _session(login))
+    response = client.post("/api/import-local", json={"session_id": "bob", "paths": [path]})
+    assert len(response.json()["job_ids"]) == 1
+
+
+def test_scan_sent_marker_belongs_to_the_selected_account(video_folder: Path) -> None:
+    from local_encoder import history
+
+    history.update_entry(
+        history.HistoryEntry(
+            id="sent",
+            url=str((video_folder / "one.mp4").resolve()),
+            server="https://avideo.example.com/",
+            username="alice",
+            status="success",
+            videos_id=9,
+        )
+    )
+    for username, sent in (("alice", True), ("bob", False)):
+        data = client.post(
+            "/api/folders/scan",
+            json={
+                "path": str(video_folder),
+                "site_url": "https://avideo.example.com/",
+                "username": username,
+            },
+        ).json()
+        assert (data["videos"][0]["sent"] is not None) is sent
 
 
 def test_local_job_keeps_the_original_and_is_remembered(

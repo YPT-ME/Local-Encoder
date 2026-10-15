@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import subprocess
 import threading
 from collections.abc import Callable, Iterator
@@ -613,6 +614,52 @@ def test_mp4_cancel_before_start_runs_nothing(
 # ---------------------------------------------------------------------------
 # encode_hls
 # ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("languages", [("por", "por"), ("und", "und"), ("a!", "a?")])
+def test_hls_keeps_each_audio_track_in_a_separate_file(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, languages: tuple[str, str]
+) -> None:
+    tracks = [
+        {"index": i, "language": lang, "title": f"Track {i}"} for i, lang in enumerate(languages)
+    ]
+    _fake_media(monkeypatch, HD, tracks)
+
+    def behaviour(cmd: list[str]) -> dict[str, Any]:
+        if "-vn" in cmd:
+            mapping = cmd[cmd.index("-map") + 1]
+            Path(cmd[-1]).write_text(mapping, encoding="utf-8")
+        return _ok(cmd)
+
+    procs = _install_popen(monkeypatch, behaviour)
+    encode_hls(tmp_path / "in.mp4", tmp_path, [240])
+
+    audio_outputs = [Path(proc.cmd[-1]) for proc in procs if "-vn" in proc.cmd]
+    assert len(set(audio_outputs)) == 2
+    master = (tmp_path / "in" / "index.m3u8").read_text(encoding="utf-8")
+    for i, output in enumerate(audio_outputs):
+        assert output.read_text(encoding="utf-8") == f"0:a:{i}"
+        assert f'URI="{output.relative_to(tmp_path / "in").as_posix()}"' in master
+
+
+@pytest.mark.parametrize("titles", [("por", "por", "por (2)"), ('Main "audio"', "Main 'audio'")])
+def test_hls_audio_options_have_unique_valid_names(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, titles: tuple[str, ...]
+) -> None:
+    tracks = [{"index": i, "language": "por", "title": title} for i, title in enumerate(titles)]
+    _fake_media(monkeypatch, HD, tracks)
+
+    def behaviour(cmd: list[str]) -> dict[str, Any]:
+        if "-vn" in cmd:
+            Path(cmd[-1]).write_text("#EXTM3U\n", encoding="utf-8")
+        return _ok(cmd)
+
+    _install_popen(monkeypatch, behaviour)
+    encode_hls(tmp_path / "in.mp4", tmp_path, [240])
+    master = (tmp_path / "in" / "index.m3u8").read_text(encoding="utf-8")
+    names = re.findall(r'NAME="([^"]+)",LANGUAGE=', master)
+    assert len(names) == len(titles)
+    assert len(set(names)) == len(titles)
 
 
 def test_hls_software_command_matches_php_encoder(

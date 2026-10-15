@@ -107,7 +107,10 @@ The other fields:
    - Otherwise it sends chunk PUTs (C). It validates every response and, if a chunk fails, resumes with the same `file_id` (backoff 2, 4, 8, 16, 30, 30 s).
    - Then it sends B with `chunkFile`.
    - On 413 or when retries run out, it falls back to a multipart `video` POST.
-7. Notify (E): `fail=0` on success, `fail=1` on failure.
+7. Notify (E): `fail=0` on success, `fail=1` on failure. Local Encoder requires an explicit
+   `error: false` response before marking the job successful or deleting its local files. A
+   `completion_in_progress` response is retried three times (2/4/8 s); other failures are surfaced
+   to the user and the converted files are kept.
 
 ## Authentication details
 

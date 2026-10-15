@@ -197,6 +197,8 @@ def _session_info(session_id: str, session: _Session) -> dict[str, Any]:
     return {
         "ok": True,
         "session_id": session_id,
+        "username": session.login.username,
+        "user_id": session.login.user_id,
         "name": session.login.name or session.login.username,
         "logo_url": session.server_url + "videos/userPhoto/logo.png",
         "categories": categories,
@@ -251,6 +253,7 @@ class ScanRequest(BaseModel):
     path: str
     recursive: bool = False
     site_url: str = ""
+    username: str = ""
 
 
 class LocalImportRequest(BaseModel):
@@ -358,6 +361,7 @@ class Job:
         self.raw_file: Path | None = None
         self.encoded: list[Path] = []
         self.encoded_fmt = ""
+        self.encoded_resolutions: list[int] = []
         self.videos_id: int | None = None
 
     # -- state -----------------------------------------------------------
@@ -369,6 +373,8 @@ class Job:
             "source": self.source,
             "site": urlsplit(self.session.server_url).netloc,
             "site_url": self.session.server_url,
+            "username": self.session.login.username,
+            "user_id": self.session.login.user_id,
             "status": self.status,
             "title": self.title,
             "thumbnail": self.thumbnail,
@@ -875,13 +881,19 @@ def _pipeline(job: Job) -> None:
     )
 
     # 4. Convert (skipped when an earlier attempt already did it)
-    if job.encoded and job.encoded_fmt == plan.fmt and all(f.exists() for f in job.encoded):
+    if (
+        job.encoded
+        and job.encoded_fmt == plan.fmt
+        and job.encoded_resolutions == plan.resolutions
+        and all(f.exists() for f in job.encoded)
+    ):
         job.log("Reusing the files converted in the previous attempt")
     else:
         _check_disk(job.work_dir, _estimate_bytes(plan, media.height, duration))
         job.emit("progress", {"step": "encode", "pct": 0})
         job.encoded = _encode(job, cfg, plan)
         job.encoded_fmt = plan.fmt
+        job.encoded_resolutions = list(plan.resolutions)
     job.emit("progress", {"step": "encode", "pct": 100})
     job.check_cancel()
 
@@ -1086,6 +1098,20 @@ def _folder_error(exc: LocalEncoderError) -> HTTPException:
     return HTTPException(status_code=400, detail=classify(exc).to_dict())
 
 
+def _active_local_paths(site_url: str = "", username: str = "") -> set[str]:
+    """Local videos queued for this destination (an unconnected scan shows all jobs)."""
+    with _state_lock:
+        return {
+            os.path.normcase(str(job.raw_file))
+            for job in _jobs.values()
+            if job.kind == "local"
+            and job.status in ACTIVE
+            and job.raw_file is not None
+            and (not site_url or job.session.server_url == site_url)
+            and (not username or job.session.login.username == username)
+        }
+
+
 @app.post("/api/folders/browse")
 def browse_folder(req: FolderRequest) -> dict[str, Any]:
     """Sub-folders of a folder (home when empty), plus the usual starting places."""
@@ -1102,12 +1128,8 @@ def scan_folder(req: ScanRequest) -> dict[str, Any]:
         result = folders.scan(req.path, recursive=req.recursive, skip=OUTPUT_DIR)
     except LocalEncoderError as exc:
         raise _folder_error(exc) from exc
-    sent = history.sent_items(req.site_url) if req.site_url else {}
-    active = {
-        os.path.normcase(str(j.raw_file))
-        for j in _jobs.values()
-        if j.kind == "local" and j.status in ACTIVE and j.raw_file is not None
-    }
+    sent = history.sent_items(req.site_url, req.username) if req.site_url else {}
+    active = _active_local_paths(req.site_url, req.username)
     videos = []
     for video in result.videos:
         key = os.path.normcase(video.path)
@@ -1130,14 +1152,10 @@ def scan_folder(req: ScanRequest) -> dict[str, Any]:
 def start_import_local(req: LocalImportRequest) -> dict[str, Any]:
     """Queue videos that are already on this computer; they are read where they are."""
     session = _get_session(req.session_id)
-    active = {
-        os.path.normcase(str(j.raw_file))
-        for j in _jobs.values()
-        if j.kind == "local" and j.status in ACTIVE and j.raw_file is not None
-    }
+    active = _active_local_paths(session.server_url, session.login.username)
     job_ids: list[str] = []
     skipped: list[dict[str, Any]] = []
-    for raw_path in req.paths[:500]:
+    for raw_path in req.paths:
         try:
             path = folders.video_file(raw_path)
         except LocalEncoderError as exc:
@@ -1242,6 +1260,13 @@ def retry_job(job_id: str, req: RetryRequest) -> dict[str, Any]:
         session = _get_session(req.session_id)
         if session.server_url != job.session.server_url:
             raise HTTPException(status_code=400, detail="That connection is for another site.")
+        if (
+            session.login.user_id != job.session.login.user_id
+            or session.login.username != job.session.login.username
+        ):
+            raise HTTPException(
+                status_code=400, detail="Connect with the same account that added this video."
+            )
         job.session = session
     elif time.time() - job.session.created > SESSION_TTL_SECONDS:
         raise HTTPException(status_code=401, detail="Please connect to your AVideo site again.")

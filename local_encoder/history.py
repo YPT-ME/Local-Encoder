@@ -123,7 +123,7 @@ def list_entries(
     return list(reversed(entries))
 
 
-def sent_items(server: str) -> dict[str, HistoryEntry]:
+def sent_items(server: str, username: str = "") -> dict[str, HistoryEntry]:
     """The latest successful upload to *server* per source (a link, or a file path).
 
     File paths are compared with ``os.path.normcase`` (case-insensitive on Windows).
@@ -131,6 +131,10 @@ def sent_items(server: str) -> dict[str, HistoryEntry]:
     wanted = server.rstrip("/")
     result: dict[str, HistoryEntry] = {}
     for entry in _read_all():
-        if entry.status == "success" and entry.server.rstrip("/") == wanted:
+        if (
+            entry.status == "success"
+            and entry.server.rstrip("/") == wanted
+            and (not username or entry.username == username)
+        ):
             result[os.path.normcase(entry.url)] = entry
     return result

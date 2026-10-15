@@ -982,7 +982,7 @@ def encode_hls(
       index.m3u8           – master playlist
       enc_XXXX.key         – AES-128 key (16 raw bytes)
       keyinfo              – FFmpeg key-info file
-      audio_tracks/<lang>/audio.m3u8 + *.ts
+      audio_tracks/<lang>_<track>/audio.m3u8 + *.ts
       res<N>/index.m3u8 + *.ts
 
     Returns the path to the produced ``.zip`` file.
@@ -1056,6 +1056,8 @@ def _encode_hls_in(
 
     for track in audio_tracks:
         lang_safe = re.sub(r"[^a-z0-9_\-]", "", track["language"], flags=re.IGNORECASE)
+        # Language tags need not be unique (e.g. main audio and commentary in Portuguese).
+        lang_safe = f"{lang_safe or 'track'}_{track['index']}"
         lang_dir = audio_tracks_dir / lang_safe
         lang_dir.mkdir(exist_ok=True)
 
@@ -1183,11 +1185,21 @@ def _encode_hls_in(
     # ------------------------------------------------------------------
     master_lines = ["#EXTM3U", "#EXT-X-VERSION:3"]
 
+    audio_names: set[str] = set()
     for track in valid_audio_tracks:
         default = "YES" if track["index"] == 0 else "NO"
+        # HLS requires distinct NAME values within a group, even for the same language.
+        title = str(track["title"]).replace('"', "'").replace("\r", " ").replace("\n", " ")
+        title = title.strip() or str(track["language"])
+        name = title
+        suffix = 2
+        while name in audio_names:
+            name = f"{title} ({suffix})"
+            suffix += 1
+        audio_names.add(name)
         master_lines.append(
             f'#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="audio_group",'
-            f'NAME="{track["title"]}",LANGUAGE="{track["language"]}",'
+            f'NAME="{name}",LANGUAGE="{track["language"]}",'
             f"DEFAULT={default},AUTOSELECT=YES,"
             f'URI="audio_tracks/{track["lang_safe"]}/audio.m3u8"'
         )

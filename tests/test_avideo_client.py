@@ -328,11 +328,11 @@ def test_notify_done_success() -> None:
     c._username = "alice"
     c._encrypted_pass = "enc"
 
-    body = {"ok": True}
+    body = {"error": False, "video_id": 42}
     with patch.object(c._http, "post", return_value=_mock_response(body)) as mock_post:
         result = c.notify_done(42, "hash123")
 
-    assert result == {"ok": True}
+    assert result == body
     called_url = mock_post.call_args[0][0]
     assert "aVideoEncoderNotifyIsDone" in called_url
 
@@ -342,11 +342,50 @@ def test_notify_done_failed_flag() -> None:
     c._username = "alice"
     c._encrypted_pass = "enc"
 
-    with patch.object(c._http, "post", return_value=_mock_response({})) as mock_post:
+    with patch.object(c._http, "post", return_value=_mock_response({"error": False})) as mock_post:
         c.notify_done(1, "h", failed=True)
 
     posted_data = mock_post.call_args[1]["data"]
     assert posted_data["fail"] == "1"
+
+
+@pytest.mark.parametrize("body", [{"error": True, "code": "completion_failed"}, {}, []])
+def test_notify_done_requires_confirmation(body: dict[str, Any] | list[Any]) -> None:
+    with AVideoClient("https://example.com/") as c:
+        with patch.object(c._http, "post", return_value=_mock_response(body)):
+            with pytest.raises(AVideoAPIError) as excinfo:
+                c.notify_done(42, "h")
+    assert excinfo.value.code == "completion_failed"
+
+
+def test_notify_done_retries_completion_in_progress() -> None:
+    busy = _mock_response({"error": True, "code": "completion_in_progress"})
+    success = _mock_response({"error": False, "video_id": 42})
+    with AVideoClient("https://example.com/") as c:
+        with (
+            patch.object(c._http, "post", side_effect=[busy, success]) as post,
+            patch("local_encoder.avideo_client._sleep") as sleep,
+        ):
+            assert c.notify_done(42, "h") == {"error": False, "video_id": 42}
+    assert post.call_count == 2
+    assert post.call_args_list[0].kwargs["data"] == post.call_args_list[1].kwargs["data"]
+    sleep.assert_called_once()
+
+
+def test_notify_done_stops_retrying_a_busy_site() -> None:
+    with AVideoClient("https://example.com/") as c:
+        with (
+            patch.object(
+                c._http,
+                "post",
+                return_value=_mock_response({"error": True, "code": "completion_in_progress"}),
+            ) as post,
+            patch("local_encoder.avideo_client._sleep"),
+            pytest.raises(AVideoAPIError) as excinfo,
+        ):
+            c.notify_done(42, "h")
+    assert excinfo.value.code == "completion_in_progress"
+    assert post.call_count == 4
 
 
 # ---------------------------------------------------------------------------

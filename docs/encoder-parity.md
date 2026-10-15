@@ -15,6 +15,13 @@ paths without a prefix are in this repository. Line numbers drift — re-check b
 - **Full audit (Mode B): 2026-10-15, commit `09d6ff3`.** The PHP Encoder was re-inventoried from
   its UI (`E/view/`) and `Format.php`; every row below was checked against the code, not the
   README. Live flags read from https://vlu.me/ (AVideo 30.2).
+- **Post-fix integration verification: 2026-10-15**, Windows, AVideo 30.2 at https://vlu.me/,
+  with normal TLS verification and the FastAPI file-import pipeline in software-encoding mode.
+  A six-second vertical MP4 (240p/360p plus the site's automatic MP3) and a six-second HLS video
+  (240p/360p, AES-128, two Portuguese audio tracks with distinct paths and names) were uploaded,
+  found active on the site and decoded after download. Titles, descriptions, categories,
+  durations and JPG/GIF/WebP thumbnails were checked. Packaged apps on macOS/Linux were not
+  exercised in this run.
 
 ## Known Defects
 
@@ -147,9 +154,9 @@ Otherwise it shows Low/SD/HD checkboxes (`E/view/index_shareVideos.php:5-7`,
 | Persistent queue with statuses | ❌ | The queue lives in memory, with one worker (`server.py:53-91`), and is lost on restart. The Encoder has 9 statuses (`E/objects/Encoder.php:26-34`). |
 | Priority, delete/cancel, re-queue, "Recheck" (send again without re-encoding) | 🟡 | Cancel, “Try again” (reuses the download and the converted files, updates the same video), remove, open folder (`server.py`, `/api/jobs/{id}/…`). No priority. |
 | Automatic retry | 🟡 | Only per upload chunk, the same as `sendFileChunk`. The Encoder also re-runs jobs up to 4 times, and retries transient network errors up to 5 times with a wait of `min(120, 5·n)` minutes (`E/objects/Encoder.php:1298-1379`). |
-| Resume a transfer without re-encoding | ✅ | “Try again” sends the kept files with the same `videos_id`. |
+| Resume a transfer without re-encoding | ✅ | “Try again” requires the original site and account and sends the kept files with the same `videos_id`. A changed format or resolution plan triggers a new encode instead of sending an obsolete ladder. |
 | Renew site access when the token expires | ❌ | The Encoder has a manual "Renew site access" action (`E/objects/Streamer.php:163-198`). Local Encoder sessions last 12 h, but a queued job does not re-check its token when it starts. |
-| Notify done (success) | 🟡 | Sent. `completion_in_progress` is not retried (`avideo_client.py:668-696`). |
+| Notify done (success) | ✅ | Both web UI and CLI require an explicit `error: false` acknowledgement before success/history/cleanup. `completion_in_progress` is retried three times with 2/4/8 s waits; a persistent busy state or a completion failure keeps the converted files for “Try again”. |
 | Notify `fail=1` on error | ✅ | `AVideoClient.notify_failed`. |
 | Encoder log to the site (`aVideoEncoderLog`) | ❌ | The Encoder logs every status change and every step (`E/objects/Encoder.php:359-433`, `:4438-4461`). |
 | Keep or delete local files | 🟡 | Files are kept after failures in both. `--keep-files` also keeps them after success (CLI only). The Encoder's "Auto remove" is an admin setting. |
@@ -176,6 +183,10 @@ Otherwise it shows Low/SD/HD checkboxes (`E/view/index_shareVideos.php:5-7`,
   outputs; the PHP Encoder always uses one run.
 - HLS maps **`0:v:0`** instead of `0:v`, so cover art or extra video streams are not encoded as
   more renditions.
+- HLS audio folders include the track index (`audio_tracks/por_0/`, `por_1/`, etc.) so tracks
+  with the same language or colliding sanitized language tags cannot overwrite each other. The
+  master playlist points to each track's own relative path and gives duplicate audio names a
+  numbered suffix so players can offer each track separately; the Streamer needs no change.
 - Unknown height = 1080 in HLS too (PHP's `HLSProcessor` returns 0 and makes only the smallest
   rendition; Local Encoder follows `Format.php`).
 - Playlist/channel links and live broadcasts are refused with a message (the PHP Encoder strips
@@ -204,7 +215,7 @@ Otherwise it shows Low/SD/HD checkboxes (`E/view/index_shareVideos.php:5-7`,
    4. Output validation (10-s decode check) and one encode retry.
    5. Metadata: user groups, release date (+ IANA timezone), override status, replace an
       existing video, a positive `encoder_queue_id`.
-   6. Reliability: encoder log to the site, retry `completion_in_progress`.
+   6. Reliability: encoder log to the site.
 3. **The rest**
    - Auto Audio/spectrum, extract audio, Auto WebM (deferred), channel import, local folder bulk
      encode, persistent queue, cookies file, create-category link, language selector.

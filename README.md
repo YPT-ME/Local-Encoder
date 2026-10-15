@@ -68,6 +68,8 @@ Local Encoder remembers your choices on this computer (language, sites, last fol
 
 If something goes wrong, the video says why in plain words and what to do next. **Try again** continues where it stopped (the work already done is kept), **Open folder** shows the files, and **Report a problem** prepares a file with the logs (without passwords) for a GitHub issue.
 
+Use the **same site and account** when trying a video again; the account is shown next to each video in the queue. Converted files are reused while their format and qualities still match the site's settings. A video is marked complete only after the site confirms it. If a file cannot be added, it and the remaining files stay selected so you can try again. Folder imports add every selected video, and the same file can be queued for different sites or accounts.
+
 While videos are being processed, the computer does not go to sleep. **Keep the computer on until the queue finishes**; quitting Local Encoder stops the videos in progress.
 
 ### Updating the program
