@@ -4,7 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "local-encoder"
-version = "0.1.0"
+# Single source: local_encoder/__init__.py (the release workflow stamps the tag version there)
+dynamic = ["version"]
 description = "CLI tool to download, encode, and upload videos to an AVideo server"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -31,6 +32,14 @@ dev = [
     "ruff>=0.4",
     "mypy>=1.9",
 ]
+# Used by .github/workflows/release.yml to package the executables
+build = [
+    "pyinstaller>=6.10",
+    "pip-licenses>=5.0",
+]
+
+[tool.hatch.version]
+path = "local_encoder/__init__.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["local_encoder"]

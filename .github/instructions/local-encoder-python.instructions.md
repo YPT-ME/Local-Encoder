@@ -15,8 +15,9 @@ applyTo: "**/*.py"
 | `local_encoder/downloader.py` | `yt-dlp` integration (used as a Python library, not the CLI binary). |
 | `local_encoder/server.py` | FastAPI web UI backend, in-memory job store, single worker thread, SSE progress. |
 | `local_encoder/cli.py` | Typer CLI (`import`, `serve`, `logs`). |
-| `local_encoder/config.py` | `.env`/environment configuration (`Config`, `load_config`). |
-| `local_encoder/_frozen.py` | PyInstaller bundle detection and bundled `ffmpeg`/`ffprobe` resolution. |
+| `local_encoder/config.py` | `.env`/environment configuration (`Config`, `load_config`, `default_work_dir`). |
+| `local_encoder/_frozen.py` | PyInstaller bundle detection and bundled `ffmpeg`/`ffprobe` resolution (next to the executable, or embedded on macOS). |
+| `local_encoder/updates.py` | Checks GitHub Releases for a newer version (packaged app only). |
 | `local_encoder/history.py` | JSON-lines job history in `~/.local/share/local-encoder/history.jsonl`. |
 | `local_encoder/logging_setup.py` | Rotating log file in `~/.local/share/local-encoder/local-encoder.log`. |
 | `local_encoder/progress.py` | Rich progress bars for the CLI. |

@@ -583,10 +583,30 @@ def show_logs(
     console.print(table)
 
 
+# Fixed by default so the browser keeps the saved site/user settings (they are stored per
+# address, port included). Uncommon, to avoid clashing with other local web apps.
+DEFAULT_PORT = 47800
+
+
+def _pick_port(host: str, port: int) -> int:
+    """Return *port* when it is free, otherwise any free port chosen by the OS."""
+    import socket
+
+    for candidate in (port, 0):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            try:
+                sock.bind((host, candidate))
+            except OSError:
+                continue
+            chosen: int = sock.getsockname()[1]
+            return chosen
+    raise OSError(f"No free port available on {host}")
+
+
 @app.command("serve")
 def serve(
     host: str = typer.Option("127.0.0.1", help="Bind host"),
-    port: int = typer.Option(8000, help="Bind port"),
+    port: int = typer.Option(DEFAULT_PORT, help="Bind port (another free port is used if busy)"),
     no_browser: bool = typer.Option(False, "--no-browser", help="Do not open a browser tab"),
 ) -> None:
     """Start the web UI (FastAPI + uvicorn)."""
@@ -596,12 +616,16 @@ def serve(
 
     from local_encoder.server import app as fastapi_app
 
-    url = f"http://{host}:{port}"
-    typer.echo(f"Starting web UI at {url}")
+    actual_port = _pick_port(host, port)
+    if actual_port != port:
+        console.print(f"[yellow]Port {port} is busy; using {actual_port} instead.[/yellow]")
+    url = f"http://{host}:{actual_port}"
+    console.print(f"[bold green]Local Encoder {__version__} is running at {url}[/bold green]")
+    console.print("Keep this window open while you use it. Close it to stop Local Encoder.")
     if not no_browser:
         # Open after a short delay so the server is ready
         import threading
 
         threading.Timer(1.0, lambda: webbrowser.open(url)).start()
 
-    uvicorn.run(fastapi_app, host=host, port=port)
+    uvicorn.run(fastapi_app, host=host, port=actual_port, log_level="warning")

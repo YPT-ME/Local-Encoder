@@ -31,9 +31,10 @@ without running it.
   - yt-dlp: patch `local_encoder.downloader.yt_dlp.YoutubeDL` as in `tests/test_downloader.py`.
   - FastAPI: `fastapi.testclient.TestClient(app)`; isolate global job state with
     `monkeypatch.setattr("local_encoder.server._jobs", {...})` and `_job_order`.
-- Use `tmp_path` for every file the test writes. Never write into the repository, `output/`, or the
-  real `~/.local/share/local-encoder/` (patch `history._HISTORY_FILE` /
-  `logging_setup._LOG_DIR` when the code under test touches them).
+- Use `tmp_path` for every file the test writes. Never write into the repository or the real
+  `~/.local/share/local-encoder/`. `tests/conftest.py` already redirects the log file and the
+  history to a temp folder; tests that start jobs must patch `server.OUTPUT_DIR` (the
+  `_isolated_output` fixture in `tests/test_server.py` does it).
 - When you fix a bug, add a regression test that fails before the fix.
 - When you change a request sent to AVideo (fields, endpoint, method), assert the exact fields in a
   test — those fields are a compatibility contract with many AVideo versions.
@@ -58,7 +59,7 @@ end-to-end run.
 - Typical run (from this repo):
   ```bash
   local-encoder import "<url or file>" --server https://vlu.me/ --user <user> --password <pass> --ssl-no-verify --format mp4
-  local-encoder serve --port 8765   # port 8000 is often taken on this machine by another Docker app
+  local-encoder serve --no-browser  # http://127.0.0.1:47800 (another free port if busy)
   ```
 - After the run, verify on the site: the video exists, plays, has the right title/description/
   category, thumbnails (jpg/gif/webp) appear, every expected resolution/format is listed, and the
@@ -68,6 +69,15 @@ end-to-end run.
   `AGENTS.md`/`CLAUDE.md`/`.github/copilot-instructions.md` rules for the AVideo side, then re-run
   the end-to-end test here. Remember other AVideo installations will not have that change — the
   Local Encoder must still work (or fail with a clear message) against older versions.
+
+## Packaged Executable
+
+Changes to packaging (`local-encoder.spec`, `scripts/fetch_ffmpeg.py`, `scripts/make_dist.py`,
+`local_encoder/_frozen.py`, release workflows) must be checked with a real local build (see
+`docs/releasing.md`). Start `dist/LocalEncoder-<platform>/LocalEncoder serve --no-browser`, check that
+the page, `/api/version` and the vendored JS load, and run one upload through it. The bundled
+FFmpeg is recent (9.x): FFmpeg options must work on both old and new FFmpeg versions; for example
+`-vsync` was removed in FFmpeg 9. Validate the workflows with `actionlint`.
 
 ## What to Report
 

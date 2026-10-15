@@ -5,3 +5,9 @@ tests/__pycache__/*
 output/*
 local_encoder/static/vendor/*
 .coverage
+
+# Packaging outputs (scripts/fetch_ffmpeg.py, pyinstaller, scripts/make_dist.py)
+bin/
+build/
+dist/
+__pycache__/

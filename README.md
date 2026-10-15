@@ -1,5 +1,6 @@
 # Local Encoder
 
+[![Latest release](https://img.shields.io/github/v/release/YPT-ME/Local-Encoder?label=download)](https://github.com/YPT-ME/Local-Encoder/releases/latest)
 [![CI](https://github.com/YPT-ME/Local-Encoder/actions/workflows/ci.yml/badge.svg)](https://github.com/YPT-ME/Local-Encoder/actions/workflows/ci.yml)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue?logo=python&logoColor=white)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
@@ -9,6 +10,37 @@
 Production-style video ingestion and transcoding pipeline built with Python.
 
 The application downloads videos from external platforms, processes them with FFmpeg, generates thumbnails, and uploads optimized streaming files to an AVideo server — with real-time progress updates streamed to the browser.
+
+It replaces the remote [AVideo Encoder](https://github.com/WWBN/AVideo-Encoder): your own computer does the encoding and sends the result to your [AVideo](https://github.com/WWBN/AVideo) site.
+
+---
+
+## Download
+
+Ready-to-use program, no installation and no Python needed (FFmpeg is included). These links always download the **latest version**:
+
+| System | Download |
+| --- | --- |
+| Windows 10/11 (64-bit) | [LocalEncoder-windows-x64.zip](https://github.com/YPT-ME/Local-Encoder/releases/latest/download/LocalEncoder-windows-x64.zip) |
+| macOS Apple Silicon (M1/M2/M3/M4) | [LocalEncoder-macos-arm64.zip](https://github.com/YPT-ME/Local-Encoder/releases/latest/download/LocalEncoder-macos-arm64.zip) |
+| macOS Intel | [LocalEncoder-macos-x64.zip](https://github.com/YPT-ME/Local-Encoder/releases/latest/download/LocalEncoder-macos-x64.zip) |
+| Linux (x64) | [LocalEncoder-linux-x64.tar.gz](https://github.com/YPT-ME/Local-Encoder/releases/latest/download/LocalEncoder-linux-x64.tar.gz) |
+| Linux (ARM64) | [LocalEncoder-linux-arm64.tar.gz](https://github.com/YPT-ME/Local-Encoder/releases/latest/download/LocalEncoder-linux-arm64.tar.gz) |
+
+All versions, checksums and release notes: [Releases](https://github.com/YPT-ME/Local-Encoder/releases).
+
+**How to start**
+
+1. Unzip the download and open **LocalEncoder** (`LocalEncoder.exe` on Windows; on Linux run `./LocalEncoder` in a terminal).
+2. Your browser opens the Local Encoder page. Type your AVideo site address, user and password, click **Connect**, and import a video link or file.
+3. Keep the Local Encoder window open while you use it.
+
+The program is not digitally signed yet, so the first start shows a warning:
+
+- **Windows**: "Windows protected your PC" → click **More info** → **Run anyway**.
+- **macOS**: after the first attempt, open **System Settings → Privacy & Security** and click **Open Anyway** next to the LocalEncoder message.
+
+When a new version is published, the Local Encoder page shows a "New version available" link. New versions are released automatically whenever [yt-dlp](https://github.com/yt-dlp/yt-dlp) is updated, so downloads from YouTube and other sites keep working.
 
 ---
 
@@ -88,11 +120,7 @@ pip install -e .
 local-encoder serve
 ```
 
-Open:
-
-```text
-http://localhost:8000
-```
+Your browser opens the page automatically (default address `http://127.0.0.1:47800`; another free port is used if that one is busy).
 
 ---
 
@@ -174,7 +202,18 @@ ffprobe -version
 
 ---
 
+## Releasing
+
+Releases are built by [`.github/workflows/release.yml`](.github/workflows/release.yml) for Windows, macOS (Apple Silicon and Intel) and Linux (x64 and ARM64), and published on [GitHub Releases](https://github.com/YPT-ME/Local-Encoder/releases):
+
+- **Manual**: push a tag (`git tag v1.2.3 && git push origin v1.2.3`) or use *Actions → Release → Run workflow* (empty version = next patch version).
+- **Automatic**: [`.github/workflows/yt-dlp-update.yml`](.github/workflows/yt-dlp-update.yml) checks yt-dlp every day; when a new version exists it updates `packaging/build-constraints.txt` and publishes a new release.
+
+Details, local builds and the FFmpeg license notes: [docs/releasing.md](docs/releasing.md).
+
+---
+
 ## License
 
-MIT
+Local Encoder is MIT licensed. The downloads also include third-party software under its own licenses — notably **FFmpeg (GPL)**, shipped unmodified, with its source code attached to each release. See `THIRD_PARTY_NOTICES.md` inside each download.
 

@@ -25,8 +25,9 @@ from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from local_encoder import __version__, updates
 from local_encoder.avideo_client import AVideoClient, LoginResult
-from local_encoder.config import Config
+from local_encoder.config import Config, default_work_dir
 from local_encoder.downloader import download_video, get_video_info
 from local_encoder.encoder import (
     ALLOWED_RESOLUTIONS,
@@ -150,7 +151,7 @@ class SessionRequest(BaseModel):
 SESSION_TTL_SECONDS = 12 * 3600
 
 # Where jobs download and encode (one sub-folder per job).
-OUTPUT_DIR = Path("output")
+OUTPUT_DIR = default_work_dir()
 
 
 @dataclass
@@ -206,6 +207,35 @@ def test_connection(req: TestConnectionRequest) -> dict[str, Any]:
     session = _Session(server_url=url, ssl_verify=req.ssl_verify, login=result, created=time.time())
     _sessions[session_id] = session
     return _session_info(session_id, session)
+
+
+# ---------------------------------------------------------------------------
+# Version / update notice
+# ---------------------------------------------------------------------------
+
+UPDATE_CHECK_SECONDS = 6 * 3600
+_update_cache: dict[str, Any] = {}
+
+
+@app.get("/api/version")
+def version_info() -> dict[str, Any]:
+    """Current version and, for the packaged app, whether a newer release exists."""
+    result: dict[str, Any] = {
+        "version": __version__,
+        "update_available": False,
+        "latest": None,
+        "download_url": updates.DOWNLOAD_PAGE,
+    }
+    if not updates.is_frozen():
+        return result  # running from source: the developer updates with git
+    if time.time() - _update_cache.get("checked", 0.0) > UPDATE_CHECK_SECONDS:
+        _update_cache["info"] = updates.check_for_update()
+        _update_cache["checked"] = time.time()
+    info = _update_cache.get("info")
+    if info is not None:
+        result["latest"] = info.latest
+        result["update_available"] = info.update_available
+    return result
 
 
 @app.post("/api/session")

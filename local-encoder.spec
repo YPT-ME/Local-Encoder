@@ -1,21 +1,16 @@
 # -*- mode: python ; coding: utf-8 -*-
-"""PyInstaller spec for avideo-local-encoder.
+"""PyInstaller spec for Local Encoder (one-file executable).
 
-Build (Windows):
-    pyinstaller avideo-local-encoder.spec
+Release builds run in .github/workflows/release.yml on every platform. Local build:
+    pip install -e ".[build]"
+    python scripts/download_vendor.py          # web UI libraries
+    python scripts/fetch_ffmpeg.py <platform>  # static FFmpeg into ./bin (optional)
+    pyinstaller local-encoder.spec
+    python scripts/make_dist.py <platform>     # zip/tar.gz with licenses
 
-Build (macOS/Linux):
-    pyinstaller avideo-local-encoder.spec
-
-Bundles ffmpeg + ffprobe from the ./bin/ directory if present.
-Download static builds:
-  Windows : https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip
-  macOS   : https://evermeet.cx/ffmpeg/
-  Linux   : https://johnvansickle.com/ffmpeg/
-
-Place the binaries at:
-  bin/ffmpeg.exe  + bin/ffprobe.exe   (Windows)
-  bin/ffmpeg      + bin/ffprobe       (macOS/Linux)
+FFmpeg (./bin, from fetch_ffmpeg.py) is embedded on macOS only; make_dist.py places it next to
+the executable on Windows/Linux. These are unmodified third-party GPL builds; make_dist.py ships
+their licenses and notices.
 """
 
 import sys
@@ -26,13 +21,15 @@ block_cipher = None
 HERE = Path(SPECPATH)
 BIN_DIR = HERE / "bin"
 
-# Collect bundled FFmpeg binaries (optional – build works without them too)
-suffix = ".exe" if sys.platform == "win32" else ""
+# FFmpeg is embedded only on macOS (one Gatekeeper approval for the whole app). On Windows and
+# Linux scripts/make_dist.py ships bin/ffmpeg* next to the executable instead, so ~300 MB are
+# not extracted to a temp folder on every start. See local_encoder/_frozen.py.
 binaries = []
-for name in ("ffmpeg", "ffprobe"):
-    candidate = BIN_DIR / f"{name}{suffix}"
-    if candidate.exists():
-        binaries.append((str(candidate), "."))
+if sys.platform == "darwin":
+    for name in ("ffmpeg", "ffprobe"):
+        candidate = BIN_DIR / name
+        if candidate.exists():
+            binaries.append((str(candidate), "."))
 
 # The web UI (index.html + vendored React/Tailwind) must ship inside the executable.
 # server.py resolves it as <bundle>/local_encoder/static.
@@ -53,9 +50,6 @@ a = Analysis(
         "yt_dlp.extractor",
         "yt_dlp.downloader",
         "yt_dlp.postprocessor",
-        "keyring",
-        "keyring.backends",
-        "keyring.backends.fail",
     ],
     hookspath=[],
     hooksconfig={},

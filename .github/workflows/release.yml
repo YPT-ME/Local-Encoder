@@ -1,0 +1,249 @@
+name: Release
+
+# Builds the Local Encoder executables for every platform and publishes them as a GitHub
+# Release. Asset names never change, so these links always point to the newest version:
+#   https://github.com/YPT-ME/Local-Encoder/releases/latest/download/LocalEncoder-windows-x64.zip
+#
+# Triggers:
+#   - push a tag:        git tag v1.2.3 && git push origin v1.2.3
+#   - Actions tab:       "Run workflow" (empty version = next patch version)
+#   - yt-dlp-update.yml: automatically when yt-dlp publishes a new version
+
+on:
+  push:
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to publish, e.g. 1.2.0 (empty = next patch version)"
+        type: string
+        required: false
+        default: ""
+  workflow_call:
+    inputs:
+      ref:
+        description: "Commit to build"
+        type: string
+        required: false
+        default: ""
+      reason:
+        description: "Why this release was made (shown in the release notes)"
+        type: string
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  version:
+    name: Decide version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      ref: ${{ steps.version.outputs.ref }}
+    steps:
+      - id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_VERSION: ${{ inputs.version }}
+          INPUT_REF: ${{ inputs.ref }}
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            version="${GITHUB_REF_NAME#v}"
+          elif [[ -n "${INPUT_VERSION:-}" ]]; then
+            version="${INPUT_VERSION#v}"
+          else
+            latest=$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName 2>/dev/null || true)
+            if [[ -z "$latest" ]]; then
+              version="0.1.0"
+            else
+              IFS=. read -r major minor patch <<< "${latest#v}"
+              version="$major.$minor.$((patch + 1))"
+            fi
+          fi
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Invalid version '$version' (expected X.Y.Z)"; exit 1
+          fi
+          if gh release view "v$version" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "::error::Release v$version already exists"; exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "ref=${INPUT_REF:-$GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+          echo "Releasing v$version from ${INPUT_REF:-$GITHUB_SHA}"
+
+  tests:
+    name: Tests
+    needs: version
+    uses: ./.github/workflows/ci.yml
+    with:
+      ref: ${{ needs.version.outputs.ref }}
+
+  build:
+    name: Build ${{ matrix.platform }}
+    needs: [version, tests]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { platform: windows-x64, os: windows-latest, exe: ".exe" }
+          - { platform: macos-arm64, os: macos-15, exe: "" }
+          - { platform: macos-x64, os: macos-15-intel, exe: "" }
+          - { platform: linux-x64, os: ubuntu-22.04, exe: "" } # older glibc = runs on more distros
+          - { platform: linux-arm64, os: ubuntu-22.04-arm, exe: "" }
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.version.outputs.ref }}
+          persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Stamp version
+        run: python scripts/set_version.py "$VERSION"
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -c packaging/build-constraints.txt -e ".[build]"
+
+      - name: Web UI libraries
+        run: python scripts/download_vendor.py
+
+      - name: FFmpeg (static GPL build)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python scripts/fetch_ffmpeg.py "${{ matrix.platform }}"
+
+      - name: Build executable
+        run: pyinstaller --noconfirm --clean local-encoder.spec
+
+      - name: Smoke test
+        run: |
+          set -euo pipefail
+          app="dist/local-encoder${{ matrix.exe }}"
+          "$app" --version | tee version.txt
+          grep -q "$VERSION" version.txt
+          "$app" serve --no-browser --port 47899 > serve.log 2>&1 &
+          server_pid=$!
+          for _ in $(seq 1 60); do
+            if curl -fs http://127.0.0.1:47899/api/version > api.json; then break; fi
+            sleep 1
+          done
+          cat serve.log api.json
+          grep -q "\"version\":\"$VERSION\"" api.json
+          curl -fs -o /dev/null http://127.0.0.1:47899/
+          curl -fs -o /dev/null http://127.0.0.1:47899/static/vendor/react.development.js
+          kill "$server_pid" || true
+
+      - name: Package with licenses
+        run: python scripts/make_dist.py "${{ matrix.platform }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ matrix.platform }}
+          if-no-files-found: error
+          retention-days: 7
+          path: |
+            dist/LocalEncoder-${{ matrix.platform }}.*
+            dist/ffmpeg-build-info-${{ matrix.platform }}.json
+
+  publish:
+    name: Publish release
+    needs: [version, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      REF: ${{ needs.version.outputs.ref }}
+      REASON: ${{ inputs.reason }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.version.outputs.ref }}
+          persist-credentials: false
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: dist-*
+          merge-multiple: true
+          path: assets
+
+      - name: Attach FFmpeg source code (GPL)
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, pathlib, urllib.request
+          assets = pathlib.Path("assets")
+          rows = []
+          for info_file in sorted(assets.glob("ffmpeg-build-info-*.json")):
+              info = json.loads(info_file.read_text())
+              url = info["source_url"]
+              name = "ffmpeg-source-" + url.rsplit("/", 1)[-1].removeprefix("ffmpeg-")
+              target = assets / name
+              if not target.exists() and "download.html" not in url:
+                  print("Downloading", url)
+                  urllib.request.urlretrieve(url, target)
+              rows.append(f"| {info['platform']} | `{info['version_line'].split(' Copyright')[0]}` | {info['provider_url']} | `{name}` |")
+              info_file.unlink()
+          pathlib.Path("ffmpeg-table.md").write_text("\n".join(rows) + "\n")
+          PY
+
+      - name: Checksums
+        run: cd assets && sha256sum * > SHA256SUMS.txt && cat SHA256SUMS.txt
+
+      - name: Release notes
+        run: |
+          set -euo pipefail
+          ytdlp=$(sed -n 's/^yt-dlp==//p' packaging/build-constraints.txt)
+          base="https://github.com/$GITHUB_REPOSITORY/releases/latest/download"
+          {
+            echo "## Download"
+            echo
+            echo "| System | File |"
+            echo "| --- | --- |"
+            echo "| Windows 10/11 (64-bit) | [LocalEncoder-windows-x64.zip]($base/LocalEncoder-windows-x64.zip) |"
+            echo "| macOS Apple Silicon (M1/M2/M3/M4) | [LocalEncoder-macos-arm64.zip]($base/LocalEncoder-macos-arm64.zip) |"
+            echo "| macOS Intel | [LocalEncoder-macos-x64.zip]($base/LocalEncoder-macos-x64.zip) |"
+            echo "| Linux (x64) | [LocalEncoder-linux-x64.tar.gz]($base/LocalEncoder-linux-x64.tar.gz) |"
+            echo "| Linux (ARM64) | [LocalEncoder-linux-arm64.tar.gz]($base/LocalEncoder-linux-arm64.tar.gz) |"
+            echo
+            echo "Unzip and open **LocalEncoder**. The first time, Windows and macOS warn that the app is not signed yet; see README.txt inside the download."
+            echo
+            if [[ -n "${REASON:-}" ]]; then echo "**Why this release:** $REASON"; echo; fi
+            echo "## Included"
+            echo
+            echo "- yt-dlp $ytdlp"
+            echo
+            echo "| Platform | FFmpeg | Build provider | Source code (GPL) |"
+            echo "| --- | --- | --- | --- |"
+            cat ffmpeg-table.md
+            echo
+            echo "FFmpeg is GPL software, distributed unmodified. Licenses and notices: THIRD_PARTY_NOTICES.md and the licenses folder inside each download."
+          } > notes.md
+          cat notes.md
+
+      - name: Publish
+        run: |
+          gh release create "v$VERSION" assets/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$REF" \
+            --title "Local Encoder $VERSION" \
+            --notes-file notes.md \
+            --latest

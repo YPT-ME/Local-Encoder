@@ -29,9 +29,10 @@ CLI (URL import):
 ```bash
 local-encoder import "<url>" --server https://vlu.me/ --user <user> --password <pass> --ssl-no-verify --format <auto|mp4|hls> [--resolution <max>] [--keep-files]
 ```
-Web UI: `local-encoder serve --port 8765 --no-browser` (port 8000 is often used by another
-container on this machine), open http://127.0.0.1:8765, untick *Verify SSL* for vlu.me, click
-*Connect*, then import a URL or a local file.
+Web UI: `local-encoder serve --no-browser`, open the address it prints (default
+http://127.0.0.1:47800), untick *Verify SSL* for vlu.me, click *Connect*, then import a URL or a
+local file. To test a release build, run the same steps with the packaged `LocalEncoder`
+executable (`docs/releasing.md`).
 
 Capture: the CLI/SSE output, `local-encoder logs`, and the `videos_id` returned.
 

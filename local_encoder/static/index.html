@@ -212,10 +212,14 @@ function App() {
     es.onerror = () => { es.close(); delete openSseRefs.current[job_id]; };
   }
 
-  // On load: forget passwords saved by older versions, and reuse a still-valid session.
+  const [versionInfo, setVersionInfo] = useState(null);
+
+  // On load: forget passwords saved by older versions, reuse a still-valid session,
+  // and ask the local server whether a newer Local Encoder release exists.
   useEffect(() => {
     try { localStorage.removeItem('ave_password'); } catch {}
     if (sessionId) resumeSession();
+    fetch('/api/version').then(r => r.json()).then(setVersionInfo).catch(() => {});
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   function disconnect() {
@@ -331,6 +335,13 @@ function App() {
           }
         </div>
         <div className="flex-1" />
+        {versionInfo?.update_available && (
+          <a href={versionInfo.download_url} target="_blank" rel="noopener noreferrer"
+            className="inline-flex items-center gap-1.5 rounded-full bg-amber-900/60 px-3 py-1 text-xs font-bold text-amber-300 hover:bg-amber-800/60">
+            <Ico name="extlink" size={12} />New version {versionInfo.latest} available – download
+          </a>
+        )}
+        {versionInfo && <span className="text-xs text-slate-600">v{versionInfo.version}</span>}
         {connStatus && <Badge ok={connStatus.ok} text={connStatus.text} />}
       </header>
 

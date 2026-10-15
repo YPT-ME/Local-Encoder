@@ -1,0 +1,74 @@
+name: yt-dlp update
+
+# Every day: if yt-dlp published a new version, pin it in packaging/build-constraints.txt,
+# commit, and publish a new Local Encoder release so users get working downloads
+# (sites like YouTube break older yt-dlp versions often).
+# Also retries the release if an earlier run updated the pin but the release failed.
+
+on:
+  schedule:
+    - cron: "17 6 * * *" # daily, 06:17 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: yt-dlp-update
+  cancel-in-progress: false
+
+jobs:
+  check:
+    name: Check yt-dlp
+    if: github.repository == 'YPT-ME/Local-Encoder'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      release: ${{ steps.check.outputs.release }}
+      ref: ${{ steps.check.outputs.ref }}
+      version: ${{ steps.check.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+
+      - id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          latest=$(curl -fsSL https://pypi.org/pypi/yt-dlp/json | python3 -c 'import json,sys; print(json.load(sys.stdin)["info"]["version"])')
+          pinned=$(sed -n 's/^yt-dlp==//p' packaging/build-constraints.txt)
+          echo "PyPI: $latest | pinned: $pinned"
+
+          if [[ "$latest" != "$pinned" ]]; then
+            sed -i "s/^yt-dlp==.*/yt-dlp==$latest/" packaging/build-constraints.txt
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git commit -am "chore(deps): update yt-dlp to $latest"
+            git push
+            echo "release=true" >> "$GITHUB_OUTPUT"
+          else
+            # Pin already current: release only if the latest release does not ship it yet
+            # (e.g. yesterday's release run failed after the pin was committed).
+            notes=$(gh release view --repo "$GITHUB_REPOSITORY" --json body --jq .body 2>/dev/null || true)
+            if [[ -n "$notes" && "$notes" != *"yt-dlp $latest"* ]]; then
+              echo "release=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "release=false" >> "$GITHUB_OUTPUT"
+            fi
+          fi
+          echo "ref=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "version=$latest" >> "$GITHUB_OUTPUT"
+
+  release:
+    name: Release
+    needs: check
+    if: needs.check.outputs.release == 'true'
+    permissions:
+      contents: write
+    uses: ./.github/workflows/release.yml
+    with:
+      ref: ${{ needs.check.outputs.ref }}
+      reason: "yt-dlp updated to ${{ needs.check.outputs.version }}"

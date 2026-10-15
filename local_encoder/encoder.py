@@ -429,8 +429,9 @@ def extract_thumbnail_webp(
         "-loop",
         "0",
         "-an",
-        "-vsync",
-        "0",
+        # No "-vsync 0" (Encoder.php still has it): FFmpeg 9 removed the option and its
+        # replacement "-fps_mode" does not exist before FFmpeg 5.1. The fps=10 filter already
+        # fixes the frame rate, so neither is needed.
         str(output_path),
     ]
     logger.info("Extracting WebP thumbnail: %s", " ".join(cmd))

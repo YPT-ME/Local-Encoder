@@ -1,0 +1,4 @@
+# Exact versions used by the release builds (.github/workflows/release.yml).
+# yt-dlp is bumped automatically by .github/workflows/yt-dlp-update.yml, which then
+# publishes a new release, because sites like YouTube break older yt-dlp versions often.
+yt-dlp==2026.8.19

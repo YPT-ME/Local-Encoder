@@ -48,8 +48,16 @@ Browser UI (static/index.html, React+Tailwind vendored)   CLI (cli.py, Typer)
 
 Pipeline: download/receive → probe → encode → thumbnails → login → register (metadata) → chunk
 upload → finalize → images → notify done. Settings: `.env`/env (`config.py`); web UI connection
-settings in browser `localStorage`. Logs and history: `~/.local/share/local-encoder/`. Packaging:
-PyInstaller (`local-encoder.spec`, `main.py`, bundled `bin/ffmpeg*`).
+session id in browser `localStorage` (never the password). Logs, history and the work folder:
+`~/.local/share/local-encoder/` (`LOCAL_ENCODER_WORK_DIR` overrides the work folder). The web UI
+listens on `127.0.0.1:47800` (another free port if busy).
+
+Distribution: one-file PyInstaller executables for Windows, macOS (arm64 + Intel) and Linux
+(x64 + arm64), with a static GPL FFmpeg, published on GitHub Releases by
+`.github/workflows/release.yml`. A new release goes out automatically whenever yt-dlp updates
+(`.github/workflows/yt-dlp-update.yml`). See `docs/releasing.md` for the build, FFmpeg licensing
+(GPL notices + source attached to every release) and signing. Anything the running app needs must
+work inside the executable, and must not depend on the current directory.
 
 ## Topic Instructions (read the ones matching the files you touch)
 
@@ -61,8 +69,9 @@ PyInstaller (`local-encoder.spec`, `main.py`, bundled `bin/ffmpeg*`).
 | [local-encoder-user-experience.instructions.md](instructions/local-encoder-user-experience.instructions.md) | UI, CLI, server, progress, README, packaging — non-technical users |
 | [local-encoder-testing.instructions.md](instructions/local-encoder-testing.instructions.md) | `tests/**` and every "done" claim — checks, mocking, end-to-end on vlu.me |
 
-Reference docs: `docs/avideo-encoder-protocol.md` (endpoints/fields) and
-`docs/encoder-parity.md` (parity status + known defects). `GAPS.md`, if present locally, is an old
+Reference docs: `docs/avideo-encoder-protocol.md` (endpoints/fields),
+`docs/encoder-parity.md` (parity status + known defects) and `docs/releasing.md` (builds,
+releases, FFmpeg license). `GAPS.md`, if present locally, is an old
 untracked note — the `docs/` files supersede it.
 
 ## Workflows (`.github/prompts/`)

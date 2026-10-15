@@ -20,6 +20,19 @@ from dotenv import load_dotenv
 
 from local_encoder._frozen import resolve_ffmpeg, resolve_ffprobe
 
+# Same per-user folder as the log file and the job history.
+APP_DATA_DIR = Path.home() / ".local" / "share" / "local-encoder"
+
+
+def default_work_dir() -> Path:
+    """Folder for downloads and encodes: ``LOCAL_ENCODER_WORK_DIR`` or the per-user default.
+
+    Never relative to the current directory – the packaged app can be started from anywhere
+    (e.g. a double-click in the Downloads folder).
+    """
+    custom = os.getenv("LOCAL_ENCODER_WORK_DIR", "").strip()
+    return Path(custom).expanduser() if custom else APP_DATA_DIR / "work"
+
 
 @dataclass
 class Config:
@@ -27,7 +40,7 @@ class Config:
     username: str = ""
     password: str = ""
     categories_id: int = 0
-    output_dir: Path = field(default_factory=lambda: Path("output"))
+    output_dir: Path = field(default_factory=default_work_dir)
     ffmpeg_bin: str = "ffmpeg"
     ffprobe_bin: str = "ffprobe"
     yt_dlp_bin: str = "yt-dlp"
