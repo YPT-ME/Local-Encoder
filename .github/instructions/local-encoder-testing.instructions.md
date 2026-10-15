@@ -19,6 +19,11 @@ Run them with the project virtualenv (`.venv`). On Windows: `.venv\Scripts\pytho
 `.venv\Scripts\ruff`, `.venv\Scripts\mypy`. Report the real output; never claim a check passed
 without running it.
 
+CI runs mypy on Linux, where Windows-only APIs (`ctypes.windll`, `os.startfile`, …) do not exist
+in the type stubs. When code touches them, put them behind `if sys.platform == "win32":` in the
+same function and check every platform: `mypy --platform linux local_encoder` (and `darwin`,
+`win32`).
+
 ## Unit Test Conventions
 
 - One file per module: `tests/test_<module>.py`. Typed test functions (`-> None`), plain `assert`.

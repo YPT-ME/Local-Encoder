@@ -89,6 +89,9 @@ def _folder(path: str) -> Path:
 
 
 def _windows_drives() -> list[Path]:
+    # The platform check also tells mypy on Linux/macOS (CI) that ctypes.windll exists here.
+    if sys.platform != "win32":
+        return []
     import ctypes
 
     try:
