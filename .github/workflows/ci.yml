@@ -16,12 +16,25 @@ on:
 
 jobs:
   test:
-    name: Test / Python ${{ matrix.python-version }}
-    runs-on: ubuntu-latest
+    name: Test / ${{ matrix.os }} / Python ${{ matrix.python-version }}
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
+        os: [ubuntu-latest]
         python-version: ["3.11", "3.12", "3.13"]
+        # Windows and macOS have their own code paths (graphics card, tray icon, sleep,
+        # drives, opening folders, case-insensitive paths): run the tests there too.
+        include:
+          - { os: windows-latest, python-version: "3.12" }
+          - { os: macos-latest, python-version: "3.12" }
+    defaults:
+      run:
+        shell: bash
+    env:
+      # tests/test_web_ui.py must compile the page instead of skipping (Node is on the runners).
+      LOCAL_ENCODER_REQUIRE_UI_CHECK: "1"
+      PYTHONUTF8: "1"
 
     steps:
       - uses: actions/checkout@v4
@@ -37,11 +50,20 @@ jobs:
       - name: Install dependencies
         run: pip install -e ".[dev]"
 
+      - name: Cache web UI libraries
+        uses: actions/cache@v4
+        with:
+          path: local_encoder/static/vendor
+          key: vendor-${{ hashFiles('scripts/download_vendor.py') }}
+
+      - name: Web UI libraries
+        run: python scripts/download_vendor.py
+
       - name: Run tests
         run: pytest --tb=short --cov=local_encoder --cov-report=term-missing
 
       - name: Upload coverage report
-        if: matrix.python-version == '3.11'
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11'
         uses: actions/upload-artifact@v4
         with:
           name: coverage-report
@@ -71,5 +93,38 @@ jobs:
       - name: Format check (ruff)
         run: ruff format --check .
 
-      - name: Type-check (mypy)
-        run: mypy local_encoder
+      # The packaged app runs on all three systems; Windows-only APIs must stay behind
+      # sys.platform checks (see .github/instructions/local-encoder-testing.instructions.md).
+      - name: Type-check (mypy, every platform)
+        run: |
+          for platform in linux win32 darwin; do
+            echo "::group::mypy --platform $platform"
+            mypy --platform "$platform" local_encoder
+            echo "::endgroup::"
+          done
+
+  selftest:
+    name: Self-test with a real FFmpeg
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: FFmpeg
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+
+      - name: Install
+        run: pip install -e .
+
+      # Converts a generated clip with the real FFmpeg (MP4 ladder, encrypted HLS zip,
+      # thumbnails, MP3): catches FFmpeg options the mocked unit tests cannot.
+      - name: local-encoder selftest
+        run: local-encoder selftest --allow-system-tools

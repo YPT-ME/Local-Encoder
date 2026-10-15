@@ -616,6 +616,62 @@ def show_logs(
     console.print(table)
 
 
+@app.command("selftest")
+def selftest(
+    download: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--download",
+            help="Also download this link (repeatable); a failed download fails the test.",
+        ),
+    ] = None,
+    try_download: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--try-download",
+            help="Also try this link (repeatable); a failure is only reported.",
+        ),
+    ] = None,
+    require_bundled: Annotated[
+        bool | None,
+        typer.Option(
+            "--require-bundled/--allow-system-tools",
+            help="Require the FFmpeg, FFprobe and deno shipped with the app (default: when packaged).",
+        ),
+    ] = None,
+) -> None:
+    """Check this installation: bundled tools, video conversion, web page files, downloads.
+
+    Nothing is sent to an AVideo site. Exit code 1 when a required check fails.
+    """
+    from local_encoder.selftest import Check, passed, run_selftest
+
+    configure_logging(stream=None)
+
+    def show(check: Check) -> None:
+        # Plain-text marks: they print on every console (CI logs, old Windows code pages).
+        mark = (
+            "[green]\\[ OK ][/green]"
+            if check.ok
+            else ("[red]\\[FAIL][/red]" if check.required else "[yellow]\\[WARN][/yellow]")
+        )
+        detail = f" [dim]- {check.detail}[/dim]" if check.detail else ""
+        console.print(f"{mark} {check.name}{detail}", highlight=False)
+
+    checks = run_selftest(
+        download_urls=download or [],
+        optional_download_urls=try_download or [],
+        require_bundled=require_bundled,
+        report=show,
+    )
+    if passed(checks):
+        console.print("[bold green]Local Encoder is working.[/bold green]")
+        return
+    failed = [c.name for c in checks if c.required and not c.ok]
+    console.print(f"[bold red]Problems found:[/bold red] {', '.join(failed)}")
+    raise typer.Exit(1)
+
+
 # Fixed by default so the browser keeps the saved site/user settings (they are stored per
 # address, port included). Uncommon, to avoid clashing with other local web apps.
 DEFAULT_PORT = 47800

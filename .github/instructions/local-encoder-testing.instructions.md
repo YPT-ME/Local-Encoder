@@ -19,6 +19,12 @@ Run them with the project virtualenv (`.venv`). On Windows: `.venv\Scripts\pytho
 `.venv\Scripts\ruff`, `.venv\Scripts\mypy`. Report the real output; never claim a check passed
 without running it.
 
+`local-encoder selftest` checks a whole installation without an AVideo site: the FFmpeg/FFprobe/
+deno it uses, a real conversion of a generated clip (MP4, encrypted HLS zip, thumbnails, MP3),
+the page files and optional downloads (`--download URL`). Run it after changing FFmpeg options
+or packaging; CI runs it with a real FFmpeg, and the release runs it on the extracted package
+(`scripts/smoke_test.py`).
+
 CI runs mypy on Linux, where Windows-only APIs (`ctypes.windll`, `os.startfile`, …) do not exist
 in the type stubs. When code touches them, put them behind `if sys.platform == "win32":` in the
 same function and check every platform: `mypy --platform linux local_encoder` (and `darwin`,

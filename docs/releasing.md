@@ -35,14 +35,26 @@ Windows on ARM runs the x64 build through emulation, so it has no separate asset
 
    It refuses a version that already exists or is not `X.Y.Z`. The chosen version and the reason
    appear at the top of the run page.
-2. **tests**: runs [`ci.yml`](../.github/workflows/ci.yml) (pytest, ruff, mypy) on that commit.
+2. **tests**: runs [`ci.yml`](../.github/workflows/ci.yml) on that commit:
+   - pytest on Linux (Python 3.11–3.13), Windows and macOS, including the web page checks
+     (`tests/test_web_ui.py`: the page compiles, every text exists in English/Portuguese/Spanish,
+     and `tests/web_ui.test.cjs`);
+   - ruff, and mypy for `linux`, `win32` and `darwin`;
+   - `local-encoder selftest` with a real FFmpeg on Linux (MP4, encrypted HLS, thumbnails, MP3).
 3. **build** (one job per platform):
    1. stamps the version into `local_encoder/__init__.py` (`scripts/set_version.py`);
    2. installs the app with `packaging/build-constraints.txt`;
    3. downloads the web UI libraries, FFmpeg (`scripts/fetch_ffmpeg.py`) and deno (`scripts/fetch_deno.py`);
    4. builds with PyInstaller (`local-encoder.spec`);
-   5. smoke-tests the executable: `--version`, then `serve`, the page, `/api/version` and the vendored JS;
-   6. packages it with `scripts/make_dist.py`.
+   5. packages it with `scripts/make_dist.py`;
+   6. smoke-tests **the package users download** (`scripts/smoke_test.py`), extracted into a
+      temporary folder: `--version`; `selftest --require-bundled` (the FFmpeg, FFprobe and deno
+      inside the package run, a test clip is converted, the page files are inside, and
+      `SMOKE_DOWNLOAD_URL` downloads; YouTube is only tried, on linux-x64, because it often
+      blocks datacenter IPs); `serve --no-tray` (page, scripts, `/api/version`, and a request
+      without the page header refused); and `serve` in tray mode (a warning only).
+      A failure stops the release – also the daily yt-dlp one, so a yt-dlp version that cannot
+      download is never shipped.
 4. **publish**:
    1. downloads the FFmpeg source code for every bundled FFmpeg build;
    2. writes `SHA256SUMS.txt` and the release notes;
@@ -79,7 +91,12 @@ python scripts/make_dist.py windows-x64      # → dist/LocalEncoder-windows-x64
 PyInstaller cannot cross-compile, so build each platform on that platform. The Linux x64 build
 can be checked from any machine with Docker before pushing. Copy the repository into a
 `python:3.12` container and run the same steps as the workflow, with `PYTHONUTF8=1` and
-`GH_TOKEN`, ending with `--version`, the `serve` smoke test and `make_dist.py linux-x64`.
+`GH_TOKEN`, ending with `make_dist.py linux-x64` and `scripts/smoke_test.py linux-x64`.
+
+After a local build, `python scripts/smoke_test.py windows-x64` (with `VERSION`,
+`SMOKE_DOWNLOAD_URLS` and `SMOKE_TRY_DOWNLOAD_URLS` set like the workflow) runs the same checks.
+On Windows the one-file app is a launcher plus a child process: stop it with
+`taskkill /T` (the script does), or the child keeps running.
 
 `scripts/download_vendor.py` sends its own User-Agent, because `cdn.tailwindcss.com` answers 403
 to Python's default one. It also checks every file's SHA-256. When upgrading a library, update

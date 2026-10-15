@@ -134,6 +134,10 @@ jobs:
     env:
       VERSION: ${{ needs.version.outputs.version }}
       PYTHONUTF8: "1" # Windows runners default to cp1252 output
+      # A small video on GitHub (reliable from Actions): its download must work on every platform.
+      SMOKE_DOWNLOAD_URL: https://github.com/mediaelement/mediaelement-files/raw/master/big_buck_bunny.mp4
+      # YouTube often blocks datacenter IPs, so this one is only reported (linux-x64).
+      SMOKE_YOUTUBE_URL: https://www.youtube.com/watch?v=jNQXAC9IVRw
     steps:
       - uses: actions/checkout@v4
         with:
@@ -168,26 +172,17 @@ jobs:
       - name: Build executable
         run: pyinstaller --noconfirm --clean local-encoder.spec
 
-      - name: Smoke test
-        run: |
-          set -euo pipefail
-          app="dist/local-encoder${{ matrix.exe }}"
-          "$app" --version | tee version.txt
-          grep -q "$VERSION" version.txt
-          "$app" serve --no-browser --port 47899 > serve.log 2>&1 &
-          server_pid=$!
-          for _ in $(seq 1 60); do
-            if curl -fs http://127.0.0.1:47899/api/version > api.json; then break; fi
-            sleep 1
-          done
-          cat serve.log api.json
-          grep -q "\"version\":\"$VERSION\"" api.json
-          curl -fs -o /dev/null http://127.0.0.1:47899/
-          curl -fs -o /dev/null http://127.0.0.1:47899/static/vendor/react.development.js
-          kill "$server_pid" || true
-
       - name: Package with licenses
         run: python scripts/make_dist.py "${{ matrix.platform }}"
+
+      # Tests the archive users download (with the FFmpeg, FFprobe and deno it ships), not the
+      # bare build: converts a test clip and downloads a video, so a release that cannot encode
+      # or download (e.g. after the daily yt-dlp update) is never published.
+      - name: Smoke test (the packaged app)
+        env:
+          SMOKE_DOWNLOAD_URLS: ${{ env.SMOKE_DOWNLOAD_URL }}
+          SMOKE_TRY_DOWNLOAD_URLS: ${{ matrix.platform == 'linux-x64' && env.SMOKE_YOUTUBE_URL || '' }}
+        run: python scripts/smoke_test.py "${{ matrix.platform }}"
 
       - uses: actions/upload-artifact@v4
         with:

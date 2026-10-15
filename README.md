@@ -183,6 +183,9 @@ pip install -e ".[dev]"
 pytest
 ruff check .
 mypy local_encoder
+
+# Check a whole installation (FFmpeg, a real conversion, page files; no AVideo site needed)
+local-encoder selftest --allow-system-tools
 ```
 
 ---
