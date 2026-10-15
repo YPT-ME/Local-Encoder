@@ -34,11 +34,20 @@ for name in ("ffmpeg", "ffprobe"):
     if candidate.exists():
         binaries.append((str(candidate), "."))
 
+# The web UI (index.html + vendored React/Tailwind) must ship inside the executable.
+# server.py resolves it as <bundle>/local_encoder/static.
+STATIC_DIR = HERE / "local_encoder" / "static"
+if not (STATIC_DIR / "vendor").is_dir():
+    raise SystemExit(
+        "local_encoder/static/vendor is missing – run `python scripts/download_vendor.py` first."
+    )
+datas = [(str(STATIC_DIR), "local_encoder/static")]
+
 a = Analysis(
     ["main.py"],
     pathex=[str(HERE)],
     binaries=binaries,
-    datas=[],
+    datas=datas,
     hiddenimports=[
         "yt_dlp",
         "yt_dlp.extractor",

@@ -31,3 +31,15 @@ def test_nearest_resolution_low():
 
 def test_nearest_resolution_high():
     assert nearest_resolution(9999) == ALLOWED_RESOLUTIONS[-1]
+
+
+def test_output_resolution_reads_only_encoder_suffix() -> None:
+    from pathlib import Path
+
+    from local_encoder.encoder import output_resolution
+
+    assert output_resolution(Path("My video_720p.mp4")) == 720
+    assert output_resolution(Path("Episode_2024_360p.mp4")) == 360
+    assert output_resolution(Path("Episode_2024.zip")) is None
+    assert output_resolution(Path("clip_123p.mp4")) is None  # not an AVideo resolution
+    assert output_resolution(Path("audio.mp3")) is None

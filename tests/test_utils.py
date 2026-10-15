@@ -35,3 +35,13 @@ def test_generate_file_id_is_hex():
 def test_generate_file_id_is_unique():
     ids = {generate_file_id() for _ in range(100)}
     assert len(ids) == 100
+
+
+def test_format_duration_matches_avideo_format() -> None:
+    from local_encoder.utils import format_duration
+
+    assert format_duration(0) == "00:00:00"
+    assert format_duration(59.6) == "00:01:00"
+    assert format_duration(3725) == "01:02:05"
+    assert format_duration(-5) == "00:00:00"
+    assert format_duration(500 * 3600) == "99:00:00"

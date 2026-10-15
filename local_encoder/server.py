@@ -10,9 +10,13 @@ from __future__ import annotations
 import json
 import logging
 import queue
+import secrets
+import shutil
 import threading
+import time
 import uuid
 from collections.abc import Callable, Generator
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -21,7 +25,7 @@ from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from local_encoder.avideo_client import AVideoAPIError, AVideoClient
+from local_encoder.avideo_client import AVideoClient, LoginResult
 from local_encoder.config import Config
 from local_encoder.downloader import download_video, get_video_info
 from local_encoder.encoder import (
@@ -32,6 +36,7 @@ from local_encoder.encoder import (
     extract_thumbnail_gif,
     extract_thumbnail_jpg,
     extract_thumbnail_webp,
+    output_resolution,
 )
 from local_encoder.logging_setup import configure_logging
 from local_encoder.utils import probe_duration, sanitize_filename
@@ -117,15 +122,12 @@ if STATIC_DIR.exists():
 
 class ImportRequest(BaseModel):
     url: str
-    server_url: str
-    username: str
-    password: str
+    session_id: str
     categories_id: int = 0
     title: str = ""
     description: str = ""
     format: str = "auto"  # "auto" | "mp4" | "hls"
     resolutions: list[int] = []  # empty = all allowed
-    ssl_verify: bool = True
 
 
 class TestConnectionRequest(BaseModel):
@@ -133,6 +135,57 @@ class TestConnectionRequest(BaseModel):
     username: str
     password: str
     ssl_verify: bool = True
+
+
+class SessionRequest(BaseModel):
+    session_id: str
+
+
+# ---------------------------------------------------------------------------
+# Sessions – the password is used once to log in; later calls reuse the token
+# AVideo returned (valid ~1 day), so the browser never stores the password and
+# each job does not log in again (AVideo rate-limits encoder logins).
+# ---------------------------------------------------------------------------
+
+SESSION_TTL_SECONDS = 12 * 3600
+
+# Where jobs download and encode (one sub-folder per job).
+OUTPUT_DIR = Path("output")
+
+
+@dataclass
+class _Session:
+    server_url: str
+    ssl_verify: bool
+    login: LoginResult
+    created: float
+
+
+_sessions: dict[str, _Session] = {}
+
+
+def _get_session(session_id: str) -> _Session:
+    session = _sessions.get(session_id)
+    if session is None or time.time() - session.created > SESSION_TTL_SECONDS:
+        _sessions.pop(session_id, None)
+        raise HTTPException(
+            status_code=401, detail="Please connect to your AVideo site again (session expired)."
+        )
+    return session
+
+
+def _session_info(session_id: str, session: _Session) -> dict[str, Any]:
+    categories = session.login.categories
+    if not categories:
+        with AVideoClient(session.server_url, ssl_verify=session.ssl_verify) as client:
+            categories = client.get_categories()
+    return {
+        "ok": True,
+        "session_id": session_id,
+        "name": session.login.name or session.login.username,
+        "logo_url": session.server_url + "videos/userPhoto/logo.png",
+        "categories": categories,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -146,30 +199,19 @@ def test_connection(req: TestConnectionRequest) -> dict[str, Any]:
     try:
         with AVideoClient(url, ssl_verify=req.ssl_verify) as client:
             result = client.login(req.username, req.password)
-        logo_url = url + "videos/userPhoto/logo.png"
-        return {"ok": True, "name": result.name or result.username, "logo_url": logo_url}
-    except AVideoAPIError as exc:
-        return {"ok": False, "error": str(exc)}
     except Exception as exc:
+        logger.warning("test_connection failed: %s", exc)
         return {"ok": False, "error": str(exc)}
+    session_id = secrets.token_urlsafe(24)
+    session = _Session(server_url=url, ssl_verify=req.ssl_verify, login=result, created=time.time())
+    _sessions[session_id] = session
+    return _session_info(session_id, session)
 
 
-@app.get("/api/categories")
-def list_categories(
-    server_url: str,
-    username: str,
-    password: str,
-    ssl_verify: bool = True,
-) -> list[dict[str, Any]]:
-    url = server_url if server_url.endswith("/") else server_url + "/"
-    try:
-        with AVideoClient(url, ssl_verify=ssl_verify) as client:
-            client.login(username, password)
-            cats = client.get_categories()
-            return cats
-    except Exception as exc:
-        logger.warning("list_categories failed: %s", exc)
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+@app.post("/api/session")
+def check_session(req: SessionRequest) -> dict[str, Any]:
+    """Return the connection info of a session still alive in this server process."""
+    return _session_info(req.session_id, _get_session(req.session_id))
 
 
 # ---------------------------------------------------------------------------
@@ -186,19 +228,19 @@ def _run_pipeline(
     raw_file: Path,
     work_dir: Path,
     files_to_clean: list[Path],
-    server_url: str,
-    username: str,
-    password: str,
+    session: _Session,
     categories_id: int,
-    ssl_verify: bool,
     video_title: str,
     video_description: str,
     duration: float,
     fmt: str,
     resolutions: list[int],
     cfg: Config,
+    source_url: str = "",
 ) -> None:
     """Encode and upload a local raw_file. Called from both import endpoints."""
+    server_url = session.server_url
+    ssl_verify = session.ssl_verify
     seek = min(duration * 0.25, 600.0) if duration > 0 else 5.0
 
     # Server config
@@ -246,7 +288,7 @@ def _run_pipeline(
         emit("progress", {"step": "encode", "pct": pct, "msg": f"Encoding {pct}%"})
 
     encoded_files: list[Path] = []
-    upload_resolution = res_cap
+    upload_resolution: int | None = res_cap
     encoded_duration = duration
 
     if fmt == "mp4":
@@ -261,7 +303,7 @@ def _run_pipeline(
         files_to_clean.extend(mp4_files)
         encoded_files.extend(mp4_files)
         upload_resolution = max(
-            (int(f.stem.rsplit("_", 1)[-1].rstrip("p")) for f in mp4_files),
+            (r for r in (output_resolution(f) for f in mp4_files) if r is not None),
             default=res_cap or ALLOWED_RESOLUTIONS[0],
         )
         encoded_duration = probe_duration(mp4_files[-1], cfg.ffprobe_bin) if mp4_files else duration
@@ -277,6 +319,7 @@ def _run_pipeline(
         )
         files_to_clean.append(hls_zip)
         encoded_files = [hls_zip]
+        upload_resolution = None  # the HLS zip is stored without a resolution
         emit("log", {"msg": f"HLS ZIP: {hls_zip.name}"})
 
     emit("progress", {"step": "encode", "pct": 100, "msg": "Encode complete"})
@@ -301,8 +344,8 @@ def _run_pipeline(
     # Upload
     emit("progress", {"step": "upload", "pct": 0, "msg": "Uploading…"})
     with AVideoClient(server_url, ssl_verify=ssl_verify) as client:
-        login_result = client.login(username, password)
-        emit("log", {"msg": f"Logged in as {login_result.name or login_result.username}"})
+        client.use_login(session.login)
+        emit("log", {"msg": f"Uploading as {session.login.name or session.login.username}"})
 
         reg = client.register_video(
             title=video_title,
@@ -311,77 +354,119 @@ def _run_pipeline(
             duration=encoded_duration or duration,
             categories_id=categories_id,
             description=video_description,
+            download_url=source_url,
         )
         emit("log", {"msg": f"Registered: videos_id={reg.videos_id}"})
 
-        total_files = len(encoded_files)
-        for idx, enc_file in enumerate(encoded_files):
-            file_size = enc_file.stat().st_size
-            try:
-                file_res = int(enc_file.stem.rsplit("_", 1)[-1].rstrip("p"))
-            except ValueError:
-                file_res = upload_resolution
-            file_ext = "zip" if enc_file.suffix == ".zip" else "mp4"
+        # From here on the site has a video record: tell it when anything fails,
+        # otherwise the video stays in "encoding" forever (Encoder.php does the same).
+        try:
+            total_files = len(encoded_files)
+            for idx, enc_file in enumerate(encoded_files):
+                file_size = enc_file.stat().st_size
+                file_ext = "zip" if enc_file.suffix == ".zip" else "mp4"
 
-            def on_upload(fname: str, sent: int, total: int, _idx: int = idx) -> None:
-                base_pct = _idx * 100 // total_files
-                file_pct = int(sent * 100 / total) if total else 0
-                overall = base_pct + file_pct // total_files
-                emit(
-                    "progress",
-                    {"step": "upload", "pct": overall, "msg": f"Uploading {fname} {file_pct}%"},
-                )
+                def on_upload(fname: str, sent: int, total: int, _idx: int = idx) -> None:
+                    base_pct = _idx * 100 // total_files
+                    file_pct = int(sent * 100 / total) if total else 0
+                    overall = base_pct + file_pct // total_files
+                    emit(
+                        "progress",
+                        {"step": "upload", "pct": overall, "msg": f"Uploading {fname} {file_pct}%"},
+                    )
 
-            client.upload_file(
-                file_path=enc_file,
-                videos_id=reg.videos_id,
-                video_id_hash=reg.video_id_hash,
-                title=video_title,
-                format_ext=file_ext,
-                resolution=file_res,
-                duration=encoded_duration or duration,
-                categories_id=categories_id,
-                description=video_description,
-                progress_callback=on_upload,
-            )
-            emit("log", {"msg": f"Uploaded {enc_file.name} ({file_size // 1_048_576} MiB)"})
-
-        # Auto MP3
-        if server_cfg.auto_convert_to_mp3 and fmt != "hls":
-            mp3_file = work_dir / f"{filename_stem}.mp3"
-            files_to_clean.append(mp3_file)
-            try:
-                emit("log", {"msg": "Extracting MP3…"})
-                extract_mp3(raw_file, mp3_file, ffmpeg_bin=cfg.ffmpeg_bin)
                 client.upload_file(
-                    file_path=mp3_file,
+                    file_path=enc_file,
                     videos_id=reg.videos_id,
                     video_id_hash=reg.video_id_hash,
                     title=video_title,
-                    format_ext="mp3",
-                    resolution=0,
+                    format_ext=file_ext,
+                    resolution=output_resolution(enc_file),
                     duration=encoded_duration or duration,
                     categories_id=categories_id,
                     description=video_description,
+                    download_url=source_url,
+                    progress_callback=on_upload,
                 )
-                emit("log", {"msg": "MP3 uploaded"})
-            except Exception as exc:
-                emit("log", {"msg": f"MP3 skipped: {exc}"})
+                emit("log", {"msg": f"Uploaded {enc_file.name} ({file_size // 1_048_576} MiB)"})
 
-        # Thumbnails upload
-        client.upload_images(
-            videos_id=reg.videos_id,
-            video_id_hash=reg.video_id_hash,
-            duration=encoded_duration or duration,
-            jpg_path=jpg_file if jpg_file.exists() else None,
-            gif_path=gif_file if gif_file.exists() else None,
-            webp_path=webp_file if webp_file.exists() else None,
-        )
+            # Auto MP3
+            if server_cfg.auto_convert_to_mp3 and fmt != "hls":
+                mp3_file = work_dir / f"{filename_stem}.mp3"
+                files_to_clean.append(mp3_file)
+                try:
+                    emit("log", {"msg": "Extracting MP3…"})
+                    extract_mp3(raw_file, mp3_file, ffmpeg_bin=cfg.ffmpeg_bin)
+                    client.upload_file(
+                        file_path=mp3_file,
+                        videos_id=reg.videos_id,
+                        video_id_hash=reg.video_id_hash,
+                        title=video_title,
+                        format_ext="mp3",
+                        resolution=None,
+                        duration=encoded_duration or duration,
+                        categories_id=categories_id,
+                        description=video_description,
+                    )
+                    emit("log", {"msg": "MP3 uploaded"})
+                except Exception as exc:
+                    emit("log", {"msg": f"MP3 skipped: {exc}"})
 
-        client.notify_done(reg.videos_id, reg.video_id_hash)
+            # Thumbnails upload
+            client.upload_images(
+                videos_id=reg.videos_id,
+                video_id_hash=reg.video_id_hash,
+                duration=encoded_duration or duration,
+                jpg_path=jpg_file if jpg_file.exists() else None,
+                gif_path=gif_file if gif_file.exists() else None,
+                webp_path=webp_file if webp_file.exists() else None,
+            )
+
+            client.notify_done(reg.videos_id, reg.video_id_hash)
+        except BaseException:
+            client.notify_failed(reg.videos_id, reg.video_id_hash)
+            raise
 
     emit("progress", {"step": "upload", "pct": 100, "msg": "Upload complete"})
     emit("done", {"videos_id": reg.videos_id, "url": f"{server_url}video/{reg.videos_id}"})
+
+
+def _finish_job(
+    job: dict[str, Any],
+    emit: Callable[[str, Any], None],
+    files_to_clean: list[Path],
+    work_dir: Path,
+) -> None:
+    """Delete the job's files after success; keep them after a failure so no work is lost."""
+    if job["status"] != "done":
+        if any(f.exists() for f in files_to_clean):
+            emit("log", {"msg": f"Files kept for a new attempt in: {work_dir.resolve()}"})
+        return
+    for f in files_to_clean:
+        try:
+            if f.exists():
+                f.unlink()
+        except OSError:
+            pass
+    shutil.rmtree(work_dir, ignore_errors=True)
+
+
+def _make_emit(job: dict[str, Any]) -> Callable[[str, Any], None]:
+    msg_queue: queue.Queue[str | None] = job["queue"]
+
+    def emit(event: str, data: Any) -> None:
+        if event == "info":
+            if data.get("title"):
+                job["title"] = data["title"]
+            if data.get("thumbnail"):
+                job["thumbnail"] = data["thumbnail"]
+        if event == "progress":
+            step = data.get("step")
+            if step:
+                job["pct"][step] = data.get("pct", 0)
+        msg_queue.put(f"event: {event}\ndata: {json.dumps(data)}\n\n")
+
+    return emit
 
 
 # ---------------------------------------------------------------------------
@@ -391,35 +476,20 @@ def _run_pipeline(
 
 @app.post("/api/import")
 def start_import(req: ImportRequest) -> dict[str, str]:
+    session = _get_session(req.session_id)
     job_id = str(uuid.uuid4())
 
     def runner(jid: str) -> None:
         job = _jobs[jid]
-        msg_queue = job["queue"]
-
-        def emit(event: str, data: Any) -> None:
-            if event == "info":
-                if data.get("title"):
-                    job["title"] = data["title"]
-                if data.get("thumbnail"):
-                    job["thumbnail"] = data["thumbnail"]
-            if event == "progress":
-                step = data.get("step")
-                if step:
-                    job["pct"][step] = data.get("pct", 0)
-            msg_queue.put(f"event: {event}\ndata: {json.dumps(data)}\n\n")
-
+        emit = _make_emit(job)
+        work_dir = OUTPUT_DIR / jid
         files_to_clean: list[Path] = []
         try:
-            server_url = req.server_url if req.server_url.endswith("/") else req.server_url + "/"
             cfg = Config(
-                server_url=server_url,
-                username=req.username,
-                password=req.password,
+                server_url=session.server_url,
                 categories_id=req.categories_id,
-                ssl_verify=req.ssl_verify,
+                ssl_verify=session.ssl_verify,
             )
-            work_dir = Path("output") / jid
             work_dir.mkdir(parents=True, exist_ok=True)
 
             # Step 1 – Metadata
@@ -481,31 +551,25 @@ def start_import(req: ImportRequest) -> dict[str, str]:
                 raw_file=raw_file,
                 work_dir=work_dir,
                 files_to_clean=files_to_clean,
-                server_url=server_url,
-                username=req.username,
-                password=req.password,
+                session=session,
                 categories_id=req.categories_id,
-                ssl_verify=req.ssl_verify,
                 video_title=video_title,
                 video_description=video_description,
                 duration=duration,
                 fmt=req.format.lower(),
                 resolutions=req.resolutions,
                 cfg=cfg,
+                source_url=req.url,
             )
             job["status"] = "done"
 
         except Exception as exc:
+            logger.exception("Import job %s failed", jid)
             emit("error", {"msg": str(exc)})
             job["status"] = "error"
         finally:
-            for f in files_to_clean:
-                try:
-                    if f.exists():
-                        f.unlink()
-                except OSError:
-                    pass
-            msg_queue.put(None)
+            _finish_job(job, emit, files_to_clean, work_dir)
+            job["queue"].put(None)
 
     _enqueue(job_id, runner)
     return {"job_id": job_id}
@@ -517,54 +581,38 @@ def start_import(req: ImportRequest) -> dict[str, str]:
 
 
 @app.post("/api/import-file")
-async def start_import_file(
+def start_import_file(
     file: UploadFile,
-    server_url: str = Form(...),
-    username: str = Form(...),
-    password: str = Form(...),
+    session_id: str = Form(...),
     categories_id: int = Form(0),
     title: str = Form(""),
     description: str = Form(""),
     format: str = Form("auto"),
     resolution: str = Form(""),  # comma-separated ints e.g. "360,720"
-    ssl_verify: bool = Form(True),
 ) -> dict[str, str]:
     """Upload a local video file for encoding and publishing."""
+    session = _get_session(session_id)
     job_id = str(uuid.uuid4())
-    raw_bytes = await file.read()
-    original_filename = file.filename or "video.mp4"
+    work_dir = OUTPUT_DIR / job_id
+    work_dir.mkdir(parents=True, exist_ok=True)
+    # Never trust the browser-supplied name as a path.
+    original_filename = sanitize_filename(Path(file.filename or "video.mp4").name)
+    raw_file = work_dir / original_filename
+    # Copy to disk in pieces instead of reading the whole video into memory.
+    with open(raw_file, "wb") as fh:
+        shutil.copyfileobj(file.file, fh, length=1024 * 1024)
+    file_size_bytes = raw_file.stat().st_size
 
     def runner(jid: str) -> None:
         job = _jobs[jid]
-        msg_queue = job["queue"]
-
-        def emit(event: str, data: Any) -> None:
-            if event == "info":
-                if data.get("title"):
-                    job["title"] = data["title"]
-            if event == "progress":
-                step = data.get("step")
-                if step:
-                    job["pct"][step] = data.get("pct", 0)
-            msg_queue.put(f"event: {event}\ndata: {json.dumps(data)}\n\n")
-
-        files_to_clean: list[Path] = []
+        emit = _make_emit(job)
+        files_to_clean: list[Path] = [raw_file]
         try:
-            srv = server_url if server_url.endswith("/") else server_url + "/"
             cfg = Config(
-                server_url=srv,
-                username=username,
-                password=password,
+                server_url=session.server_url,
                 categories_id=categories_id,
-                ssl_verify=ssl_verify,
+                ssl_verify=session.ssl_verify,
             )
-            work_dir = Path("output") / jid
-            work_dir.mkdir(parents=True, exist_ok=True)
-
-            raw_file = work_dir / original_filename
-            raw_file.write_bytes(raw_bytes)
-            files_to_clean.append(raw_file)
-            file_size_bytes = len(raw_bytes)
             emit(
                 "progress",
                 {"step": "download", "pct": 100, "msg": f"File received: {original_filename}"},
@@ -591,11 +639,8 @@ async def start_import_file(
                 raw_file=raw_file,
                 work_dir=work_dir,
                 files_to_clean=files_to_clean,
-                server_url=srv,
-                username=username,
-                password=password,
+                session=session,
                 categories_id=categories_id,
-                ssl_verify=ssl_verify,
                 video_title=video_title,
                 video_description=video_description,
                 duration=duration,
@@ -608,16 +653,12 @@ async def start_import_file(
             job["status"] = "done"
 
         except Exception as exc:
+            logger.exception("File import job %s failed", jid)
             emit("error", {"msg": str(exc)})
             job["status"] = "error"
         finally:
-            for f in files_to_clean:
-                try:
-                    if f.exists():
-                        f.unlink()
-                except OSError:
-                    pass
-            msg_queue.put(None)
+            _finish_job(job, emit, files_to_clean, work_dir)
+            job["queue"].put(None)
 
     _enqueue(job_id, runner)
     return {"job_id": job_id}

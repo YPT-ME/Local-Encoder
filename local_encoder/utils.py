@@ -17,6 +17,18 @@ def sanitize_filename(name: str) -> str:
     return name[:200] or "video"
 
 
+def format_duration(seconds: float) -> str:
+    """Return *seconds* as ``HH:MM:SS`` – the only duration format AVideo accepts.
+
+    AVideo's ``Video::isValidDuration()`` requires ``^\\d{1,2}:\\d{1,2}:\\d{1,2}``; hours are
+    capped at 99 so the value always matches.
+    """
+    total = max(0, int(round(seconds)))
+    hours, rest = divmod(total, 3600)
+    minutes, secs = divmod(rest, 60)
+    return f"{min(hours, 99):02d}:{minutes:02d}:{secs:02d}"
+
+
 def generate_file_id() -> str:
     """Return a 16-character hex string for chunked-upload session IDs."""
     return os.urandom(8).hex()

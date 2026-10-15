@@ -138,7 +138,10 @@ const TABS = ['URL', 'File Upload'];
 function App() {
   const [serverUrl, setServerUrl] = useLocalStorage('ave_server_url', '');
   const [username, setUsername]   = useLocalStorage('ave_username', '');
-  const [password, setPassword]   = useLocalStorage('ave_password', '');
+  // The password is only kept in memory and sent once to log in; the local server
+  // keeps the AVideo login token and the browser keeps only a session id.
+  const [password, setPassword]   = useState('');
+  const [sessionId, setSessionId] = useLocalStorage('ave_session_id', '');
   const [sslVerify, setSslVerify] = useLocalStorage('ave_ssl_verify', true);
   const [connStatus, setConnStatus] = useState(null);
   const [testing, setTesting] = useState(false);
@@ -209,10 +212,41 @@ function App() {
     es.onerror = () => { es.close(); delete openSseRefs.current[job_id]; };
   }
 
-  // Auto-test connection on mount if credentials are already saved
+  // On load: forget passwords saved by older versions, and reuse a still-valid session.
   useEffect(() => {
-    if (serverUrl && username) testConnection();
+    try { localStorage.removeItem('ave_password'); } catch {}
+    if (sessionId) resumeSession();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  function disconnect() {
+    setSessionId(''); setConnStatus(null); setCategories([]); setCatsLoaded(false);
+  }
+
+  function applyConnection(data) {
+    setSessionId(data.session_id);
+    setConnStatus({ ok: true, text: data.name || 'Connected', logoUrl: data.logo_url || null });
+    const cats = data.categories || [];
+    setCategories(cats);
+    if (cats.length > 0) {
+      // Keep the saved category if it still exists on this server, else fall back to first
+      const saved = localStorage.getItem(catKey);
+      const savedId = saved ? JSON.parse(saved) : null;
+      const exists = cats.some(c => String(c.id) === String(savedId));
+      if (!exists) setCatId(String(cats[0].id));
+    }
+    setCatsLoaded(true);
+  }
+
+  async function resumeSession() {
+    try {
+      const res = await fetch('/api/session', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ session_id: sessionId }),
+      });
+      if (!res.ok) { disconnect(); return; }
+      applyConnection(await res.json());
+    } catch (e) { disconnect(); }
+  }
 
   async function testConnection() {
     setTesting(true); setConnStatus(null); setCatsLoaded(false); setCategories([]);
@@ -223,31 +257,14 @@ function App() {
       });
       const data = await res.json();
       if (data.ok) {
-        setConnStatus({ ok: true, text: data.name || 'Connected', logoUrl: data.logo_url || null });
-        fetchCategories();
+        applyConnection(data);
+        setPassword('');
       } else {
+        setSessionId('');
         setConnStatus({ ok: false, text: data.error || 'Failed' });
       }
-    } catch (e) { setConnStatus({ ok: false, text: 'Network error' }); }
+    } catch (e) { setConnStatus({ ok: false, text: 'Could not reach Local Encoder. Is it still running?' }); }
     finally { setTesting(false); }
-  }
-
-  async function fetchCategories() {
-    const p = new URLSearchParams({ server_url: serverUrl, username, password, ssl_verify: sslVerify });
-    try {
-      const res = await fetch('/api/categories?' + p);
-      if (!res.ok) throw new Error(await res.text());
-      const cats = await res.json();
-      setCategories(cats);
-      if (cats.length > 0) {
-        // Keep the saved category if it still exists on this server, else fall back to first
-        const saved = localStorage.getItem(catKey);
-        const savedId = saved ? JSON.parse(saved) : null;
-        const exists = cats.some(c => String(c.id) === String(savedId));
-        if (!exists) setCatId(String(cats[0].id));
-      }
-    } catch (e) { /* silently ignore, form still works */ }
-    finally { setCatsLoaded(true); }
   }
 
   async function startImport() {
@@ -256,18 +273,22 @@ function App() {
       if (tab === 'URL') {
         res = await fetch('/api/import', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ url: videoUrl, server_url: serverUrl, username, password, ssl_verify: sslVerify,
+          body: JSON.stringify({ url: videoUrl, session_id: sessionId,
             categories_id: parseInt(catId) || 0, title: vidTitle, description: vidDesc,
             format, resolutions }),
         });
       } else {
         const fd = new FormData();
         fd.append('file', localFile);
-        [['server_url', serverUrl],['username', username],['password', password],
-         ['ssl_verify', sslVerify],['categories_id', catId],['title', vidTitle],
+        [['session_id', sessionId],['categories_id', catId],['title', vidTitle],
          ['description', vidDesc],['format', format],['resolution', resolutions.join(',')]
         ].forEach(([k,v]) => fd.append(k, v));
         res = await fetch('/api/import-file', { method: 'POST', body: fd });
+      }
+      if (res.status === 401) {
+        disconnect();
+        setConnStatus({ ok: false, text: 'Please type your password and connect again.' });
+        return;
       }
       const data = await res.json();
       const jid = data.job_id;
@@ -326,18 +347,18 @@ function App() {
                 <Ico name="server" className="text-brand" size={13} />AVideo Server
               </h2>
               <div className="space-y-2.5">
-                <Input label="Server URL" type="url" value={serverUrl} onChange={setServerUrl} placeholder="https://your-avideo.example.com/" />
+                <Input label="Server URL" type="url" value={serverUrl} onChange={v => { setServerUrl(v); if (sessionId) disconnect(); }} placeholder="https://your-avideo.example.com/" />
                 <div className="grid grid-cols-2 gap-2">
-                  <Input label="Username" value={username} onChange={setUsername} placeholder="admin" />
-                  <Input label="Password" type="password" value={password} onChange={setPassword} placeholder="••••••" />
+                  <Input label="Username" value={username} onChange={v => { setUsername(v); if (sessionId) disconnect(); }} placeholder="admin" />
+                  <Input label="Password" type="password" value={password} onChange={setPassword} placeholder={connOk ? 'Connected' : '••••••'} />
                 </div>
                 <div className="flex items-center justify-between pt-0.5">
                   <label className="flex items-center gap-2 text-xs text-slate-400 cursor-pointer select-none">
                     <input type="checkbox" checked={sslVerify} onChange={e => setSslVerify(e.target.checked)} className="accent-brand" />
                     Verify SSL
                   </label>
-                  <Btn onClick={testConnection} disabled={testing || !serverUrl || !username} size="sm">
-                    <span className="inline-flex items-center gap-1.5"><Ico name="wifi" size={12} />{testing ? 'Testing…' : 'Test'}</span>
+                  <Btn onClick={testConnection} disabled={testing || !serverUrl || !username || !password} size="sm">
+                    <span className="inline-flex items-center gap-1.5"><Ico name="wifi" size={12} />{testing ? 'Connecting…' : 'Connect'}</span>
                   </Btn>
                 </div>
               </div>

@@ -1,5 +1,5 @@
 ---
-description: Draft a reply to a Local Encoder GitHub issue for a (usually non-technical) user, in the issue's language.
+description: Draft a reply to a Local Encoder GitHub issue for a (usually non-technical) user (reply in English, like AVideo).
 argument-hint: Paste the issue text or give the issue number/URL
 allowed-tools: Bash(gh issue view:*), Bash(gh issue list:*)
 ---

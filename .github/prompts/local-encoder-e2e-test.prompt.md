@@ -30,8 +30,8 @@ CLI (URL import):
 local-encoder import "<url>" --server https://vlu.me/ --user <user> --password <pass> --ssl-no-verify --format <auto|mp4|hls> [--resolution <max>] [--keep-files]
 ```
 Web UI: `local-encoder serve --port 8765 --no-browser` (port 8000 is often used by another
-container on this machine), open http://127.0.0.1:8765, untick *Verify SSL* for vlu.me, test
-connection, then import a URL or a local file.
+container on this machine), open http://127.0.0.1:8765, untick *Verify SSL* for vlu.me, click
+*Connect*, then import a URL or a local file.
 
 Capture: the CLI/SSE output, `local-encoder logs`, and the `videos_id` returned.
 

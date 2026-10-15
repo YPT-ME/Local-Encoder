@@ -51,8 +51,9 @@ keep the app usable by that person without reading documentation.
 - Single page, React 18 + Tailwind loaded from the **vendored** files in `static/vendor/`
   (`scripts/download_vendor.py`); no CDN, no build step. Match the existing component style
   (`Input`, `Select`, `StepRow`, `useLocalStorage`).
-- Connection settings persist in `localStorage` so the user types them once; a *Test connection*
-  action must give a clear yes/no with the reason.
+- Site address and user name persist in `localStorage`; the password does not (see the security
+  instructions) — the session lets the user reload the page without typing it again. *Connect*
+  must give a clear yes/no with the reason.
 - The page must fit the existing two-column viewport layout and remain usable on a laptop screen;
   keep labels short and in plain words. Prefer "Video quality" over "Resolution", "Streaming (HLS)"
   over "HLS" in labels, keeping technical terms only as secondary hints.

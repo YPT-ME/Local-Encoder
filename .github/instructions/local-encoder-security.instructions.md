@@ -17,9 +17,11 @@ some of which may be misconfigured or hostile.
   password on other calls.
 - Never log, print, emit over SSE, store in history, or put in an exception message: passwords,
   the encrypted `pass`, `video_id_hash`, cookies, or yt-dlp cookie files.
-- Do not put credentials in URL query strings (they end up in logs and browser history). Prefer a
-  POST body. Treat existing GET usage (e.g. `/api/categories`) as technical debt to fix, not a
-  pattern to copy.
+- Do not put credentials in URL query strings (they end up in logs and browser history); use a
+  POST body.
+- Web UI: the password lives only in memory and is sent once to `/api/test-connection`; the local
+  server keeps the AVideo token in an in-memory session (`server._sessions`) and the browser keeps
+  only the session id. Never persist the password in `localStorage`/`sessionStorage`.
 - `.env` holds local secrets and is gitignored; never commit it or copy real values into
   `.env.example`, tests, docs or fixtures.
 

@@ -31,6 +31,7 @@ from local_encoder.encoder import (
     extract_thumbnail_jpg,
     extract_thumbnail_webp,
     nearest_resolution,
+    output_resolution,
 )
 from local_encoder.logging_setup import configure_logging
 from local_encoder.progress import ProgressReporter, console
@@ -206,6 +207,7 @@ def import_video(
 
     with ProgressReporter(verbose=debug) as rpt:
         files_to_clean: list[Path] = []
+        succeeded = False
 
         try:
             # ----------------------------------------------------------
@@ -308,10 +310,9 @@ def import_video(
                 rpt.success(f"Encoded {len(mp4_files)} MP4 file(s)")
                 if mp4_files:
                     encoded_duration = probe_duration(mp4_files[-1], cfg.ffprobe_bin) or duration
-                upload_resolution = (
-                    max(int(f.stem.rsplit("_", 1)[-1].rstrip("p")) for f in mp4_files)
-                    if mp4_files
-                    else res_cap
+                upload_resolution: int | None = max(
+                    (r for r in (output_resolution(f) for f in mp4_files) if r is not None),
+                    default=res_cap,
                 )
 
             else:  # hls
@@ -330,7 +331,7 @@ def import_video(
                 files_to_clean.append(hls_zip)
                 encoded_files = [hls_zip]
                 rpt.success(f"HLS ZIP → {hls_zip.name}")
-                upload_resolution = res_cap
+                upload_resolution = None  # the HLS zip is stored without a resolution
 
             # ----------------------------------------------------------
             # Step 4 – Generate thumbnails
@@ -380,6 +381,7 @@ def import_video(
                     duration=encoded_duration,
                     categories_id=cfg.categories_id,
                     description=video_description,
+                    download_url=video_url,
                 )
                 rpt.success(
                     f"Video registered: videos_id={reg.videos_id} hash={reg.video_id_hash[:12]}…"
@@ -387,96 +389,102 @@ def import_video(
                 if reg.msg:
                     rpt.info(f"  Server message: {reg.msg}")
 
-                # 5c. Upload encoded file(s)
-                # For multi-res MP4 upload smallest files first (like PHP encoder),
-                # then the largest last so the server's format is set by the highest quality file.
-                upload_queue = list(encoded_files)
-                if resolved_fmt == "mp4" and len(upload_queue) > 1:
-                    upload_queue.sort(key=lambda p: p.stat().st_size)
+                # From here on the site has a video record: tell it when anything fails,
+                # otherwise the video stays in "encoding" forever (Encoder.php does the same).
+                try:
+                    # 5c. Upload encoded file(s)
+                    # For multi-res MP4 upload smallest files first (like PHP encoder),
+                    # then the largest last so the server's format is set by the highest quality file.
+                    upload_queue = list(encoded_files)
+                    if resolved_fmt == "mp4" and len(upload_queue) > 1:
+                        upload_queue.sort(key=lambda p: p.stat().st_size)
 
-                for idx, enc_file in enumerate(upload_queue):
-                    file_size = enc_file.stat().st_size
-                    # Parse resolution from filename (e.g. video_720p.mp4 → 720)
-                    try:
-                        file_res = int(enc_file.stem.rsplit("_", 1)[-1].rstrip("p"))
-                    except ValueError:
-                        file_res = upload_resolution
-                    file_ext = "zip" if enc_file.suffix == ".zip" else "mp4"
+                    for idx, enc_file in enumerate(upload_queue):
+                        file_size = enc_file.stat().st_size
+                        # video_720p.mp4 → 720; the HLS zip has no resolution
+                        file_res = output_resolution(enc_file)
+                        file_ext = "zip" if enc_file.suffix == ".zip" else "mp4"
 
-                    rpt.begin_upload(file_size)
-                    upload_result = client.upload_file(
-                        file_path=enc_file,
-                        videos_id=reg.videos_id,
-                        video_id_hash=reg.video_id_hash,
-                        title=video_title,
-                        format_ext=file_ext,
-                        resolution=file_res,
-                        duration=encoded_duration,
-                        categories_id=cfg.categories_id,
-                        description=video_description,
-                        progress_callback=rpt.on_upload,
-                    )
-                    rpt.success(
-                        f"Uploaded {enc_file.name} "
-                        f"({file_size // 1_048_576} MiB)"
-                        + (f" [{idx + 1}/{len(upload_queue)}]" if len(upload_queue) > 1 else "")
-                    )
-                    if upload_result.get("msg"):
-                        rpt.info(f"  Server: {upload_result['msg']}")
-
-                hist_entry.videos_id = reg.videos_id
-
-                # 5c-ii. Auto-extract and upload MP3 if server config requires it
-                if server_cfg.auto_convert_to_mp3 and resolved_fmt != "hls":
-                    mp3_file = work_dir / f"{filename_stem}.mp3"
-                    files_to_clean.append(mp3_file)
-                    try:
-                        rpt.info("Auto-extracting MP3 (server config: autoConvertVideosToMP3)…")
-                        extract_mp3(raw_file, mp3_file, ffmpeg_bin=cfg.ffmpeg_bin)
-                        mp3_size = mp3_file.stat().st_size
-                        rpt.begin_upload(mp3_size)
-                        client.upload_file(
-                            file_path=mp3_file,
+                        rpt.begin_upload(file_size)
+                        upload_result = client.upload_file(
+                            file_path=enc_file,
                             videos_id=reg.videos_id,
                             video_id_hash=reg.video_id_hash,
                             title=video_title,
-                            format_ext="mp3",
-                            resolution=0,
+                            format_ext=file_ext,
+                            resolution=file_res,
                             duration=encoded_duration,
                             categories_id=cfg.categories_id,
                             description=video_description,
+                            download_url=video_url,
                             progress_callback=rpt.on_upload,
                         )
-                        rpt.success(f"MP3 uploaded ({mp3_size // 1_048_576} MiB)")
-                    except Exception as exc:
-                        rpt.warning(f"MP3 auto-extraction skipped: {exc}")
+                        rpt.success(
+                            f"Uploaded {enc_file.name} "
+                            f"({file_size // 1_048_576} MiB)"
+                            + (f" [{idx + 1}/{len(upload_queue)}]" if len(upload_queue) > 1 else "")
+                        )
+                        if upload_result.get("msg"):
+                            rpt.info(f"  Server: {upload_result['msg']}")
 
-                # 5d. Upload thumbnails
-                rpt.info("Uploading thumbnails…")
-                img_result = client.upload_images(
-                    videos_id=reg.videos_id,
-                    video_id_hash=reg.video_id_hash,
-                    duration=encoded_duration,
-                    jpg_path=jpg_file if jpg_file.exists() else None,
-                    gif_path=gif_file if gif_file.exists() else None,
-                    webp_path=webp_file if webp_file.exists() else None,
-                )
-                if not img_result.get("error"):
-                    rpt.success("Thumbnails uploaded")
-                else:
-                    rpt.warning(f"Thumbnail upload: {img_result.get('msg', 'error')}")
+                    hist_entry.videos_id = reg.videos_id
 
-                # 5e. Notify encoding done
-                rpt.info("Notifying AVideo that encoding is complete…")
-                done_result = client.notify_done(reg.videos_id, reg.video_id_hash)
-                if done_result.get("error"):
-                    rpt.warning(f"Notify-done error: {done_result.get('msg', 'unknown')}")
-                else:
-                    rpt.success(f"Done! Video is live: {cfg.server_url}video/{reg.videos_id}")
+                    # 5c-ii. Auto-extract and upload MP3 if server config requires it
+                    if server_cfg.auto_convert_to_mp3 and resolved_fmt != "hls":
+                        mp3_file = work_dir / f"{filename_stem}.mp3"
+                        files_to_clean.append(mp3_file)
+                        try:
+                            rpt.info("Auto-extracting MP3 (server config: autoConvertVideosToMP3)…")
+                            extract_mp3(raw_file, mp3_file, ffmpeg_bin=cfg.ffmpeg_bin)
+                            mp3_size = mp3_file.stat().st_size
+                            rpt.begin_upload(mp3_size)
+                            client.upload_file(
+                                file_path=mp3_file,
+                                videos_id=reg.videos_id,
+                                video_id_hash=reg.video_id_hash,
+                                title=video_title,
+                                format_ext="mp3",
+                                resolution=None,
+                                duration=encoded_duration,
+                                categories_id=cfg.categories_id,
+                                description=video_description,
+                                progress_callback=rpt.on_upload,
+                            )
+                            rpt.success(f"MP3 uploaded ({mp3_size // 1_048_576} MiB)")
+                        except Exception as exc:
+                            rpt.warning(f"MP3 auto-extraction skipped: {exc}")
+
+                    # 5d. Upload thumbnails
+                    rpt.info("Uploading thumbnails…")
+                    img_result = client.upload_images(
+                        videos_id=reg.videos_id,
+                        video_id_hash=reg.video_id_hash,
+                        duration=encoded_duration,
+                        jpg_path=jpg_file if jpg_file.exists() else None,
+                        gif_path=gif_file if gif_file.exists() else None,
+                        webp_path=webp_file if webp_file.exists() else None,
+                    )
+                    if not img_result.get("error"):
+                        rpt.success("Thumbnails uploaded")
+                    else:
+                        rpt.warning(f"Thumbnail upload: {img_result.get('msg', 'error')}")
+
+                    # 5e. Notify encoding done
+                    rpt.info("Notifying AVideo that encoding is complete…")
+                    done_result = client.notify_done(reg.videos_id, reg.video_id_hash)
+                    if done_result.get("error"):
+                        rpt.warning(f"Notify-done error: {done_result.get('msg', 'unknown')}")
+                    else:
+                        rpt.success(f"Done! Video is live: {cfg.server_url}video/{reg.videos_id}")
+
+                except BaseException:
+                    client.notify_failed(reg.videos_id, reg.video_id_hash)
+                    raise
 
                 hist_entry.status = "success"
                 hist_entry.title = video_title
                 _history.update_entry(hist_entry)
+                succeeded = True
 
         except AVideoAPIError as exc:
             hist_entry.status = "failed"
@@ -502,9 +510,12 @@ def import_video(
             raise typer.Exit(1) from exc
         finally:
             # ----------------------------------------------------------
-            # Cleanup temp files unless --keep-files was specified
+            # Cleanup temp files unless --keep-files was specified.
+            # After a failure the files are kept so the work is not lost.
             # ----------------------------------------------------------
-            if not cfg.keep_files:
+            if not succeeded and any(f.exists() for f in files_to_clean):
+                console.print(f"[yellow]Files kept for a new attempt in:[/yellow] {work_dir}")
+            if succeeded and not cfg.keep_files:
                 for f in files_to_clean:
                     try:
                         if f.exists():

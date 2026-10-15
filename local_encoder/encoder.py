@@ -50,6 +50,20 @@ def nearest_resolution(height: int) -> int:
     return min(ALLOWED_RESOLUTIONS, key=lambda r: abs(r - height))
 
 
+def output_resolution(path: Path) -> int | None:
+    """Return the resolution of an ``encode_mp4_multi`` output (``<stem>_<res>p.mp4``).
+
+    Only the ``_<res>p`` suffix this module appends is read, and only an allowed value is
+    accepted, so a title ending in digits can never produce an invalid ``resolution``.
+    Returns ``None`` for files stored without a resolution (HLS zip, mp3).
+    """
+    match = re.search(r"_(\d+)p$", path.stem)
+    if path.suffix.lower() != ".mp4" or not match:
+        return None
+    value = int(match.group(1))
+    return value if value in ALLOWED_RESOLUTIONS else None
+
+
 def encode_mp4(
     input_path: Path,
     output_path: Path,
