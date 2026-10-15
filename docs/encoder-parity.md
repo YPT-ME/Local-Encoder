@@ -194,7 +194,7 @@ Otherwise it shows Low/SD/HD checkboxes (`E/view/index_shareVideos.php:5-7`,
 
 ## Local Encoder-only advantages (keep them)
 
-- Encoding uses the user's own CPU/GPU, so the site needs no encoder server.
+- Encoding a video uses the user's own CPU/GPU, reducing server conversion work. AVideo still needs a working Web Encoder for the server-side services listed below.
 - The browser shows progress in real time over SSE.
 - A CLI is available for automation.
 - Packaging as a single executable that opens the web UI on double-click.
@@ -203,6 +203,29 @@ Otherwise it shows Low/SD/HD checkboxes (`E/view/index_shareVideos.php:5-7`,
   without secrets.
 - Tray icon, desktop notifications, link preview, drag and drop, and the computer kept awake while
   working.
+
+## AVideo services that still require the Web Encoder
+
+Verified in the current AVideo and PHP Encoder source on 2026-10-15. Local Encoder complements
+these services; it does not expose their server endpoints. Keep the site's Encoder URL configured
+and the Web Encoder available even when uploaders prepare their videos locally. These dependencies
+apply to the corresponding enabled plugins and workflows.
+
+| AVideo feature | Verified call in the Streamer | Web Encoder service |
+| --- | --- | --- |
+| Live and LiveLinks preview images | `S/plugin/Live/getImage.php:165`, `S/plugin/LiveLinks/getImage.php:75` | `E/objects/getImage.php` captures the live source. |
+| Images for direct uploads, existing videos and audio waveforms | `S/plugin/MP4ThumbsAndGif/MP4ThumbsAndGif.php:300`, `:347`, upload hook `:433` | `getImageMP4/…` routes to `E/objects/getImageMP4.php`. |
+| Player timeline preview sprites | `S/plugin/VideoThumbnails/VideoThumbnails.php:302` | `getSpiritsFromVideo/…` routes to `E/objects/getSpiritsFromVideo.php`; the poster/GIF/WebP sent by Local Encoder do not replace these sprites. |
+| Recorded live streams and saved DVR moments | `S/plugin/SendRecordedToEncoder/SendRecordedToEncoder.php:290`, `:789` | `Video::queue()` → `Video::postToEncoderQueue()` → configured Encoder `queue`. |
+| Meet and Zoom recording imports | `S/plugin/Meet/uploadRecordedVideo.json.php:81`, `S/plugin/ZoomMeetingRecorder/save.php:70` | Include `S/objects/aVideoQueueEncoder.json.php`, which calls `Video::queue()` at `:108`. |
+| Mobile video uploads | `S/plugin/MobileManager/upload.php:123` | Calls `Video::queue()`. |
+| Playlist-to-live and its EPG | `S/plugin/PlayLists/playProgramsLive.json.php:85`, `S/plugin/PlayLists/PlayLists.php:745`, `S/objects/playlist.php:1219` | `E/view/videosListToLive.php` runs the playlist stream; `E/view/videosListEPG.php` supplies its program guide. This does not imply ordinary playlist playback needs this service. |
+| Metadata for external page links added as embeds | `S/objects/videoAddNew.json.php:111` | `getLinkInfo/…` routes to `E/objects/getLinkInfo.json.php` for title, description, duration and thumbnail. |
+
+The shared queue target is built from `getEncoderURL() . 'queue'` in
+`S/objects/video.php:4238`; `queue()` builds the request at `:4302` and sends it at `:4330`.
+The PHP Encoder's `.htaccess` maps the service URLs above to their implementation files.
+This was source inspection, not a new end-to-end run of every plugin.
 
 ## Prioritized Backlog (audit 2026-10-15)
 

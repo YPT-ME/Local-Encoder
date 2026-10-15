@@ -7,10 +7,12 @@ rules here or there — never in a second copy.
 
 ## What This Project Is
 
-Local Encoder (`local-encoder`, Python ≥3.11, MIT) is a desktop tool that **replaces the remote
-AVideo Encoder**. Instead of sending a video to an Encoder server, the user downloads/selects the
-video, encodes it **on their own computer** with FFmpeg, and uploads the results to their AVideo
-site through the same Streamer endpoints the official Encoder uses.
+Local Encoder (`local-encoder`, Python ≥3.11, MIT) is a desktop tool that **complements the Web
+Encoder**. The user downloads/selects a video, encodes it **on their own computer** with FFmpeg,
+and uploads the results through the same Streamer endpoints the official Encoder uses. AVideo
+still requires a working Web Encoder for its server-side media services; keep **Encoder URL**
+configured. See `docs/encoder-parity.md` for the verified dependencies; never claim that using
+Local Encoder removes the need for the Web Encoder.
 
 Three facts drive every decision:
 
@@ -27,7 +29,7 @@ Three facts drive every decision:
 | --- | --- | --- |
 | This project | `D:\git\htdocs\avideo-local-encoder\` | |
 | AVideo Streamer (the site) | `D:\git\htdocs\AVideo\` | PHP. Has its own `AGENTS.md`, `CLAUDE.md`, `.github/` rules — follow them when editing there |
-| AVideo PHP Encoder (what we replace) | `D:\git\htdocs\AVideo\.compose\encoder\` | Separate component; reference implementation for parity |
+| AVideo PHP Encoder (server component) | `D:\git\htdocs\AVideo\.compose\encoder\` | Separate component; reference implementation for parity |
 | Local AVideo test site | https://vlu.me/ (Encoder UI at https://vlu.me/Encoder/) | Docker stack from `D:\git\htdocs\AVideo\docker-compose.yml`; the source folders are bind-mounted, so PHP edits are live |
 
 Never grep the whole AVideo repo: exclude `vendor`, `node_modules`, `.compose`, `.git` (huge) and

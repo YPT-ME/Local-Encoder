@@ -10,7 +10,7 @@ Prepare videos on your own computer and upload them to your [AVideo](https://git
 
 You will need your **AVideo site address**, an account on that site with permission to upload videos, and a video file or video link. Use the same username and password you use on your AVideo site.
 
-Local Encoder replaces the remote [AVideo Encoder](https://github.com/WWBN/AVideo-Encoder): your own computer prepares the video before uploading it.
+Local Encoder complements the [AVideo Web Encoder](https://github.com/WWBN/AVideo-Encoder): your computer can prepare video uploads, while the Web Encoder remains required for AVideo's server-side media services, including live previews, video thumbnails and timeline previews, recordings and playlist-to-live processing. Keep your site's **Encoder URL** pointing to a working Web Encoder. See [which AVideo services still require it](docs/encoder-parity.md#avideo-services-that-still-require-the-web-encoder).
 
 ---
 
