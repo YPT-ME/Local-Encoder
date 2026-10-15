@@ -51,6 +51,16 @@ def is_web_url(url: str) -> bool:
     return parts.scheme.lower() in ("http", "https") and bool(parts.netloc)
 
 
+def reject_unsupported(info: dict[str, Any]) -> None:
+    """Refuse playlist/channel links and live broadcasts (only single recorded videos)."""
+    from local_encoder.errors import LocalEncoderError
+
+    if info.get("_type") in ("playlist", "multi_video"):
+        raise LocalEncoderError("playlist_link")
+    if info.get("is_live") or info.get("live_status") in ("is_live", "is_upcoming"):
+        raise LocalEncoderError("live_link")
+
+
 def download_video(
     url: str,
     output_dir: Path,
@@ -179,6 +189,8 @@ def get_video_info(url: str) -> dict[str, Any]:
         "nocheckcertificate": True,
         "skip_download": True,
         "noplaylist": True,
+        # A playlist/channel link answers quickly with its type instead of reading every entry.
+        "extract_flat": "in_playlist",
         "socket_timeout": 20,
         **_external_tools(),
     }

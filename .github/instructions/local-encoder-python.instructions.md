@@ -11,9 +11,12 @@ applyTo: "**/*.py"
 | Module | Responsibility |
 | --- | --- |
 | `local_encoder/avideo_client.py` | Every HTTP call to an AVideo site (login, register, chunk upload, images, notify, config, categories). No other module talks HTTP to AVideo. |
-| `local_encoder/encoder.py` | Every FFmpeg command (MP4, HLS, MP3, thumbnails) and FFprobe probing used by encoding. `ENCODING_SETTINGS` mirrors the PHP Encoder. |
+| `local_encoder/encoder.py` | Every FFmpeg command (MP4, HLS, MP3, thumbnails) and FFprobe probing used by encoding (`probe_media`). `ENCODING_SETTINGS` mirrors the PHP Encoder. Hardware encoders (`detect_video_codec`, software fallback), cancel (`cancel_event` → `EncodeCancelled`). |
 | `local_encoder/downloader.py` | `yt-dlp` integration (used as a Python library, not the CLI binary). `_external_tools()` gives yt-dlp the bundled FFmpeg and deno, which are not on PATH in the packaged app. |
-| `local_encoder/server.py` | FastAPI web UI backend, in-memory job store, single worker thread, SSE progress. |
+| `local_encoder/server.py` | FastAPI web UI backend: `Job` objects (state, logs, files kept for “Try again”), single worker thread, one SSE stream for the whole queue (`/api/events`), job actions, preview, report. |
+| `local_encoder/errors.py` | Turns any exception into a stable `code` + English message (`classify`); the web UI translates the code (`static/i18n.js`, `err.<code>`). Raise `LocalEncoderError(code)` for problems Local Encoder detects itself. |
+| `local_encoder/keep_awake.py` | `inhibit()`: keeps the computer awake while videos are processed (ref-counted, never raises). |
+| `local_encoder/tray.py` | Tray icon (pystray + Pillow) used by `serve`; falls back to console mode when no tray is available. |
 | `local_encoder/cli.py` | Typer CLI (`import`, `serve`, `logs`). |
 | `local_encoder/config.py` | `.env`/environment configuration (`Config`, `load_config`, `default_work_dir`). |
 | `local_encoder/_frozen.py` | PyInstaller bundle detection and bundled `ffmpeg`/`ffprobe` resolution (next to the executable, or embedded on macOS). |
@@ -60,6 +63,12 @@ applyTo: "**/*.py"
   exception. Do not swallow failures that would upload a broken file.
 - Keep FFmpeg arguments aligned with the PHP Encoder (`Format.php`, `HLSProcessor.php`) unless a
   deliberate, documented deviation exists — see `.github/instructions/local-encoder-avideo-integration.instructions.md`.
+- Hardware encoders: FFmpeg lists `h264_amf`/`h264_nvenc`/`h264_qsv` even without the driver or
+  GPU, so only a real test encode proves one works (`detect_video_codec`). With HLS
+  `split_by_time`, NVENC/QSV need `-forced-idr 1` / `-forced_idr 1` so forced keyframes are IDR.
+  Consumer NVIDIA cards limit concurrent sessions: a ladder may need several FFmpeg runs.
+- Cover art in MP3/M4A is a video stream with `disposition.attached_pic=1`; ask ffprobe for
+  `stream_disposition=attached_pic` and do not count it as video.
 
 ## Errors and Logging
 

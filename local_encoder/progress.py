@@ -88,7 +88,8 @@ class ProgressReporter:
     def on_encode(self, current_secs: int, total_secs: int) -> None:
         if self._task is None or total_secs == 0:
             return
-        self._progress.update(self._task, completed=current_secs)
+        # The total can change while encoding (several FFmpeg runs, or a software retry).
+        self._progress.update(self._task, total=total_secs, completed=current_secs)
 
     # Upload -------------------------------------------------------------
 

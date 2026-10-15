@@ -78,3 +78,14 @@ def test_load_config_from_dotenv_file(tmp_path):
     cfg = load_config(env_file)
     assert "from-file.test" in cfg.server_url
     assert cfg.username == "fileuser"
+
+
+def test_config_built_directly_uses_the_bundled_ffmpeg(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The web UI builds Config(...) directly; it must still find the FFmpeg shipped with the app.
+    monkeypatch.setattr("local_encoder.config.resolve_ffmpeg", lambda: "/app/ffmpeg")
+    monkeypatch.setattr("local_encoder.config.resolve_ffprobe", lambda: "/app/ffprobe")
+    from local_encoder.config import Config
+
+    cfg = Config(server_url="https://example.com/")
+    assert cfg.ffmpeg_bin == "/app/ffmpeg"
+    assert cfg.ffprobe_bin == "/app/ffprobe"

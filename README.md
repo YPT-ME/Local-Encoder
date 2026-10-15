@@ -40,31 +40,37 @@ All versions, checksums and release notes: [Releases](https://github.com/YPT-ME/
 
 **Extract the whole download before opening the program. Keep the extracted files together:** the program uses the other tools in that folder to process videos.
 
-A program window opens, then your browser opens the Local Encoder page automatically. This page controls the program running on your computer. If the browser does not open, type the address shown in the program window into your browser (usually `http://127.0.0.1:47800`).
+Your browser opens the Local Encoder page automatically. This page controls the program running on your computer. If the browser does not open, go to `http://127.0.0.1:47800`.
+
+On **Windows** no program window opens: Local Encoder lives in the **icon near the clock** (it may be inside the **^** arrow). Click the icon to open the page again; right-click it and choose **Quit** to stop the program. Double-clicking **LocalEncoder.exe** again also just reopens the page. On macOS the icon is in the menu bar.
+
+The page is in English, Portuguese and Spanish: choose the language at the top.
 
 The program is not digitally signed yet, so Windows or macOS may show a warning on the first start:
 
 - **Windows**: "Windows protected your PC" → click **More info** → **Run anyway**.
 - **macOS**: after the first attempt, open **System Settings → Privacy & Security** and click **Open Anyway** next to the LocalEncoder message.
 
-### 2. Connect to your AVideo site
+### 2. Connect to your AVideo site (step 1 on the page)
 
-1. In **Server URL**, enter your AVideo site's address, for example `https://videos.example.com/`.
-2. Enter your AVideo **Username** and **Password**.
-3. Click **Connect** and wait for the connection to succeed. If your account cannot upload videos, ask your AVideo site administrator to enable uploads for it.
+1. Enter your AVideo **site address** (for example `videos.example.com`), your **user name** and your **password**.
+2. Click **Connect**. The page then shows what your site receives (for example *Streaming (HLS) · MP4 video · up to 1080p*). If something is wrong, it tells you what to do.
+3. Your sites are remembered (never the password), so you can switch between several sites with one click, or remove a site you no longer use.
 
-### 3. Add a video and let the program do the work
+### 3. Add videos (step 2 on the page)
 
-1. Under **Import Video**, choose **URL** to paste a video link, or **File Upload** to select a video saved on your computer.
-2. Optionally enter a title and choose a category. Leave **Format** set to **Auto** to let the program choose the format for your site.
-3. Click **Add to Queue**. The program prepares the video and uploads it automatically; follow the progress on the page.
-4. When the job finishes successfully, click **View** to open the video on your AVideo site.
+1. Paste a video **link**: the page shows its picture, title and length before you add it. Or choose **Files**, or simply **drag video files onto the page** (several at once).
+2. Optionally enter a title, a category and a description. Leave everything under **Advanced options** as it is unless you need it: the program picks the format and qualities your site accepts, and uses your graphics card when it can (faster).
+3. Click **Add to queue**. Each video shows its progress (download, convert, send). You can close the page and open it again later: the queue is still there. You get a notification when a video is sent.
+4. When a video is sent, use **Open video**, **Edit on site** or **Copy link**.
 
-**Keep your computer on and the Local Encoder program window open until the upload finishes.** Closing that window stops the program.
+If something goes wrong, the video says why in plain words and what to do next. **Try again** continues where it stopped (the work already done is kept), **Open folder** shows the files, and **Report a problem** prepares a file with the logs (without passwords) for a GitHub issue.
+
+While videos are being processed, the computer does not go to sleep. **Keep the computer on until the queue finishes**; quitting Local Encoder stops the videos in progress.
 
 ### Updating the program
 
-When the Local Encoder page shows **New version available**, download the new version for your computer using the table above. After any running jobs finish, close the old program, extract the new download, and open the new copy. Keep the new copy's files together too.
+When the Local Encoder page shows **New version available**, download the new version for your computer using the table above. After any running videos finish, quit the old program (tray icon → **Quit**), extract the new download, and open the new copy. Keep the new copy's files together too.
 
 New versions are released automatically when [yt-dlp](https://github.com/yt-dlp/yt-dlp), the tool used to download videos, is updated, helping downloads from YouTube and other sites keep working.
 
@@ -85,7 +91,8 @@ New versions are released automatically when [yt-dlp](https://github.com/yt-dlp/
   * Vimeo
   * 10,000+ platforms via `yt-dlp`
   * Local files
-* Automatic transcoding with FFmpeg
+* Automatic transcoding with FFmpeg, with the graphics card when available (NVIDIA, Intel Quick Sync, AMD, Apple), falling back to the processor
+* Formats and qualities chosen from what the site accepts (HLS only when the site can play it, per-user quality limits)
 * Thumbnail generation:
 
   * JPG
@@ -93,7 +100,11 @@ New versions are released automatically when [yt-dlp](https://github.com/yt-dlp/
   * WebP
 * Multi-resolution encoding
 * Chunked uploads
-* Real-time browser progress updates
+* Real-time browser progress updates; the queue survives page reloads
+* Cancel, try again without starting over, open the work folder, report a problem
+* Link preview, drag and drop of several files, several saved sites
+* Desktop notifications, tray icon, the computer kept awake while working
+* English, Portuguese and Spanish
 * CLI interface
 * Web dashboard
 

@@ -39,6 +39,13 @@ some of which may be misconfigured or hostile.
   permissive CORS. Be aware that any web page the user visits can POST to `localhost`; new
   state-changing endpoints should not be triggerable by a simple cross-site form post (require a
   JSON body / custom header, or a per-session token).
+- Implemented in `server._local_requests_only`: every request must have a local `Host`
+  (`127.0.0.1`, `localhost`, `::1` – blocks DNS rebinding), and every non-GET request the
+  `X-Local-Encoder: 1` header (a cross-site form cannot send it without a CORS preflight, which
+  this server never answers). The page's `api()` helper and file uploads send it; keep it on new
+  endpoints. GET endpoints must not change state.
+- “Report a problem” zips the logs through `server.redact()` (passwords, `_user_hash_` tokens,
+  `video_id_hash`); extend the patterns when a new secret could reach the log.
 - Uploaded files from the browser: write only inside the job work directory with a generated name
   (`sanitize_filename` + unique id); never use the client-supplied path.
 

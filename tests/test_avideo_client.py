@@ -17,6 +17,7 @@ from local_encoder.avideo_client import (
     LoginResult,
     RegisterVideoResult,
     ServerConfig,
+    SiteStatus,
 )
 
 
@@ -618,3 +619,83 @@ def test_notify_failed_never_raises() -> None:
     with patch.object(c._http, "post", side_effect=httpx.ConnectError("down")) as mock_post:
         c.notify_failed(1, "h")
     assert mock_post.call_args.kwargs["data"]["fail"] == "1"
+
+
+# ---------------------------------------------------------------------------
+# Login fields used to pick formats, site status, error codes
+# ---------------------------------------------------------------------------
+
+
+def _login_body(**extra: Any) -> dict[str, Any]:
+    return {"isLogged": True, "canUpload": True, "id": 1, "user": "a", "pass": "t", **extra}
+
+
+def test_login_reads_videohls_and_allowed_resolutions() -> None:
+    c = AVideoClient("https://example.com/")
+    body = _login_body(videoHLS=True, allowedResolutions=["720", 360, "bad", 720])
+    with patch.object(c._http, "post", return_value=_mock_response(body)):
+        result = c.login("a", "p")
+    assert result.video_hls is True
+    assert result.allowed_resolutions == [360, 720]
+
+
+def test_login_without_videohls_means_no_hls() -> None:
+    # The site sends videoHLS only when the VideoHLS plugin is enabled.
+    c = AVideoClient("https://example.com/")
+    with patch.object(c._http, "post", return_value=_mock_response(_login_body())):
+        result = c.login("a", "p")
+    assert result.video_hls is False
+    assert result.allowed_resolutions == []
+
+
+@pytest.mark.parametrize(
+    ("body", "code"),
+    [
+        ({"error": "Captcha required"}, "login_error"),
+        ({"isLogged": False}, "wrong_password"),
+        ({"isLogged": True, "canUpload": False}, "cannot_upload"),
+    ],
+)
+def test_login_errors_have_codes(body: dict[str, Any], code: str) -> None:
+    c = AVideoClient("https://example.com/")
+    with patch.object(c._http, "post", return_value=_mock_response(body)):
+        with pytest.raises(AVideoAPIError) as excinfo:
+            c.login("a", "p")
+    assert excinfo.value.code == code
+
+
+def test_rate_limit_has_code() -> None:
+    c = AVideoClient("https://example.com/")
+    with patch.object(c._http, "post", return_value=_mock_response({}, status_code=429)):
+        with pytest.raises(AVideoAPIError) as excinfo:
+            c.login("a", "p")
+    assert excinfo.value.code == "rate_limited"
+
+
+def test_get_site_status_reads_limits() -> None:
+    c = AVideoClient("https://example.com/")
+    body = {
+        "version": "30.2",
+        "file_upload_max_size": 10737418240,
+        "videoStorageLimitMinutes": "60",
+        "currentStorageUsage": 120,
+    }
+    with patch.object(c._http, "get", return_value=_mock_response(body)) as mock_get:
+        status = c.get_site_status()
+    assert status == SiteStatus(
+        version="30.2",
+        max_file_size=10737418240,
+        storage_limit_minutes=60,
+        storage_used_seconds=120,
+    )
+    assert mock_get.call_args.args[0] == "https://example.com/status"
+
+
+def test_get_site_status_falls_back_and_never_raises() -> None:
+    c = AVideoClient("https://example.com/")
+    responses = [_mock_response({}, status_code=404), _mock_response({"version": "9"})]
+    with patch.object(c._http, "get", side_effect=responses) as mock_get:
+        assert c.get_site_status().version == "9"
+    assert mock_get.call_args.args[0].endswith("objects/status.json.php")
+    with patch.object(c._http, "get", side_effect=httpx.ConnectError("down")):
+        assert c.get_site_status() == SiteStatus()

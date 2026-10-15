@@ -100,7 +100,7 @@ def test_on_encode_updates_progress() -> None:
     reporter._task = TaskID(0)
     with patch.object(reporter._progress, "update") as mock_update:
         reporter.on_encode(150, 300)
-    mock_update.assert_called_once_with(TaskID(0), completed=150)
+    mock_update.assert_called_once_with(TaskID(0), total=300, completed=150)
 
 
 def test_on_encode_zero_total_is_noop() -> None:

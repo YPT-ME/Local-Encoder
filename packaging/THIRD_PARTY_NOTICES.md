@@ -49,6 +49,9 @@ https://docs.python.org/3/license.html) and these Python packages:
 {{PYTHON_PACKAGES}}
 
 The full license texts of the Python packages are in `licenses/python-packages.txt`.
+pystray (the tray icon) is licensed under the GNU LGPL-3.0, which adds permissions to the GPL-3.0
+text: see `licenses/LGPL-3.0.txt` and `licenses/GPL-3.0.txt`. Its unmodified source is available at
+https://pypi.org/project/pystray/ and https://github.com/moses-palmer/pystray.
 
 The executable is built with PyInstaller. PyInstaller is GPL-2.0 with a special exception
 that allows distributing the bundled program under any license

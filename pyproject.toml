@@ -21,6 +21,9 @@ dependencies = [
     "fastapi>=0.111",
     "uvicorn>=0.29",
     "python-multipart>=0.0.9",
+    # Tray icon for `serve` (local_encoder/tray.py); pystray is LGPL-3.0, see docs/releasing.md
+    "pystray>=0.19",
+    "Pillow>=10.0",
 ]
 
 [project.scripts]

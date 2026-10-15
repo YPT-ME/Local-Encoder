@@ -107,6 +107,41 @@ On Windows and Linux FFmpeg is not embedded: the two GPL builds take about 330 M
 embedded copy would be extracted to a temp folder on every start. On macOS it is embedded, so
 Gatekeeper asks for permission once for the whole app instead of blocking each downloaded binary.
 
+## Tray icon and the Windows window
+
+`serve` (what a double-click runs) shows a tray icon (`local_encoder/tray.py`, `pystray` +
+`Pillow`, icon drawn at runtime) and runs uvicorn in a background thread; the icon loop needs the
+main thread on macOS. `--no-tray`, a missing `pystray`, or an icon that cannot start (Linux
+without a desktop/AppIndicator, headless CI) fall back to the old blocking console mode.
+Starting the app while another copy answers `GET /api/version` on the preferred port only
+opens the browser at that copy.
+
+- **Windows** is built with `console=False`, so no black window opens. A windowed executable
+  starts with `sys.stdout`/`sys.stderr` set to `None`; `main.py` replaces them before anything
+  is imported. For CLI commands typed in cmd/PowerShell (`LocalEncoder.exe import <url>`,
+  `--version`) it attaches to the calling console (`AttachConsole(-1)` + `CONOUT$`); cmd does
+  not wait for a windowed program, so its prompt may come back before the output ends.
+  Redirected output (pipes, files — the release smoke test) is kept as is. A double-click or
+  `serve` writes to `os.devnull`; everything still goes to the log file.
+- **macOS/Linux** keep `console=True`: the macOS build is a bare executable that Finder opens
+  through Terminal, and the Linux build is started from a terminal.
+- `hiddenimports` lists the pystray backends (`pystray._win32`, `_darwin`, `_xorg`,
+  `_appindicator`, `_gtk`); the Linux build only gets `_xorg` working, because `gi`
+  (AppIndicator/GTK) is not bundled. On GNOME without the AppIndicator extension or on pure
+  Wayland the icon may not be visible, which is why the Linux console stays.
+
+## Python package licenses (pystray is LGPL-3.0)
+
+`make_dist.py` lists every runtime package of `local-encoder` (following `pyproject.toml`
+dependencies) with `pip-licenses`, so `pystray`, `Pillow` (MIT-CMU) and `six` (MIT) appear in
+`THIRD_PARTY_NOTICES.md` and `licenses/python-packages.txt` automatically. `pystray` is
+**LGPL-3.0**: it is shipped unmodified, and anyone can rebuild the executable with a different
+`pystray` from this repository's MIT source, which is what the LGPL asks for a combined work.
+Note that `pip-licenses --with-license-file` only copies pystray's `COPYING` (the GPL-3.0
+text, also in `licenses/GPL-3.0.txt`), not its `COPYING.LGPL` with the LGPL additional
+permissions; ship the LGPL-3.0 text in `packaging/licenses/` so the package is complete. This
+is a good-faith setup, not legal advice.
+
 ## FFmpeg license (GPL)
 
 The bundled FFmpeg builds are configured with `--enable-gpl --enable-version3`, so they are

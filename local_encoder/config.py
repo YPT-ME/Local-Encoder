@@ -43,8 +43,8 @@ class Config:
     output_dir: Path = field(default_factory=default_work_dir)
     # The bundled binaries are not on PATH in the packaged app: resolve them even when a Config
     # is built directly (the web UI does), not only through load_config().
-    ffmpeg_bin: str = field(default_factory=resolve_ffmpeg)
-    ffprobe_bin: str = field(default_factory=resolve_ffprobe)
+    ffmpeg_bin: str = field(default_factory=lambda: resolve_ffmpeg())
+    ffprobe_bin: str = field(default_factory=lambda: resolve_ffprobe())
     yt_dlp_bin: str = "yt-dlp"
     streamers_id: int = 0
     keep_files: bool = False

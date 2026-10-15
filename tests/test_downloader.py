@@ -2,13 +2,21 @@
 
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
+import yt_dlp.utils  # type: ignore[import-untyped]
 
-from local_encoder.downloader import download_video, get_video_info
+from local_encoder.downloader import (
+    download_video,
+    get_video_info,
+    is_web_url,
+    reject_unsupported,
+)
+from local_encoder.errors import LocalEncoderError
 
 # ---------------------------------------------------------------------------
 # _progress_hook behaviour (tested indirectly through download_video)
@@ -182,3 +190,85 @@ def test_get_video_info_returns_empty_on_none() -> None:
         result = get_video_info("https://example.com/v")
 
     assert result == {}
+
+
+# ---------------------------------------------------------------------------
+# Single videos only, web links only, cancel
+# ---------------------------------------------------------------------------
+
+
+def test_download_and_info_ask_yt_dlp_for_the_single_video(tmp_path: Path) -> None:
+    (tmp_path / "v.mp4").write_bytes(b"x")
+    with patch(
+        "local_encoder.downloader.yt_dlp.YoutubeDL", return_value=_make_ydl_mock()
+    ) as mock_cls:
+        download_video("https://www.youtube.com/watch?v=a&list=b", tmp_path, "v")
+        get_video_info("https://www.youtube.com/watch?v=a&list=b")
+
+    for call in mock_cls.call_args_list:
+        opts = call.args[0]
+        # yt-dlp's option is "noplaylist"; an unknown key would be ignored silently.
+        assert opts["noplaylist"] is True
+        assert "no_playlist" not in opts
+    assert mock_cls.call_args_list[-1].args[0]["extract_flat"] == "in_playlist"
+
+
+@pytest.mark.parametrize(
+    ("url", "ok"),
+    [
+        ("https://www.youtube.com/watch?v=x", True),
+        ("http://example.com/v.mp4", True),
+        ("file:///etc/passwd", False),
+        ("ftp://example.com/v", False),
+        ("https://", False),
+        ("-o /tmp/x", False),
+    ],
+)
+def test_is_web_url(url: str, ok: bool) -> None:
+    assert is_web_url(url) is ok
+
+
+@pytest.mark.parametrize(
+    ("info", "code"),
+    [
+        ({"_type": "playlist"}, "playlist_link"),
+        ({"is_live": True}, "live_link"),
+        ({"live_status": "is_upcoming"}, "live_link"),
+    ],
+)
+def test_reject_unsupported(info: dict[str, Any], code: str) -> None:
+    with pytest.raises(LocalEncoderError) as excinfo:
+        reject_unsupported(info)
+    assert excinfo.value.code == code
+
+
+def test_reject_unsupported_accepts_a_video() -> None:
+    reject_unsupported({"title": "x", "live_status": "was_live"})
+
+
+def test_download_stops_when_cancelled(tmp_path: Path) -> None:
+    cancel = threading.Event()
+    cancel.set()
+    with (
+        patch("local_encoder.downloader.yt_dlp.YoutubeDL") as mock_cls,
+        pytest.raises(yt_dlp.utils.DownloadCancelled),
+    ):
+        download_video("https://example.com/v", tmp_path, "v", cancel_event=cancel)
+    mock_cls.assert_not_called()
+
+
+def test_progress_hook_raises_when_cancelled(tmp_path: Path) -> None:
+    cancel = threading.Event()
+    ydl = _make_ydl_mock()
+    hooks: list[Any] = []
+
+    def capture(opts: dict[str, Any]) -> MagicMock:
+        hooks.extend(opts["progress_hooks"])
+        return ydl
+
+    with patch("local_encoder.downloader.yt_dlp.YoutubeDL", side_effect=capture):
+        (tmp_path / "v.mp4").write_bytes(b"x")
+        download_video("https://example.com/v", tmp_path, "v", cancel_event=cancel)
+    cancel.set()
+    with pytest.raises(yt_dlp.utils.DownloadCancelled):
+        hooks[0]({"status": "downloading"})

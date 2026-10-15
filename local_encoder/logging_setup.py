@@ -26,6 +26,11 @@ _DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
 _configured = False
 
 
+def log_file_path() -> Path:
+    """Path of the current log file (rotated copies are ``<name>.1`` … ``<name>.3``)."""
+    return _LOG_FILE
+
+
 def configure_logging(debug: bool = False, stream: TextIO | None = None) -> Path:
     """Set up root logger with a rotating file handler + optional console handler.
 

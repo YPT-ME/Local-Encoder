@@ -4,6 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Local Encoder</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%234a7cff'/%3E%3Cpath d='M25 18l22 14-22 14z' fill='white'/%3E%3C/svg%3E" />
 <script src="/static/vendor/tailwind.js"></script>
 <script>
   tailwind.config = {
@@ -14,6 +15,7 @@
 <script src="/static/vendor/react.development.js" crossorigin></script>
 <script src="/static/vendor/react-dom.development.js" crossorigin></script>
 <script src="/static/vendor/babel.min.js"></script>
+<script src="/static/i18n.js"></script>
 <style>
   body { background: #0f1117; height: 100%; overflow: hidden; }
   .log-scroll::-webkit-scrollbar { width: 6px; }
@@ -28,6 +30,31 @@ const { useState, useRef, useCallback, useEffect } = React;
 
 const cls = (...a) => a.filter(Boolean).join(' ');
 
+// ── Language ──────────────────────────────────────────────────────────────
+const LANGS = ['en', 'pt', 'es'];
+function detectLang() {
+  const l = (navigator.language || 'en').slice(0, 2).toLowerCase();
+  return LANGS.includes(l) ? l : 'en';
+}
+let LANG = 'en';
+function t(key, params) {
+  const dict = window.LE_I18N || {};
+  let s = (dict[LANG] && dict[LANG][key]) ?? (dict.en && dict.en[key]) ?? key;
+  if (params) s = s.replace(/\{(\w+)\}/g, (_, k) => (params[k] ?? '') + '');
+  return s;
+}
+function errText(err) {
+  if (!err) return '';
+  const key = 'err.' + err.code;
+  if (window.LE_I18N && window.LE_I18N.en && window.LE_I18N.en[key]) return t(key, err.params || {});
+  return err.message || t('err.unknown', { detail: '' });
+}
+function codecName(key, label) {
+  const k = 'codec.' + key;
+  return window.LE_I18N && window.LE_I18N.en && window.LE_I18N.en[k] ? t(k) : label;
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────
 function useLocalStorage(key, initial) {
   const [val, setVal] = useState(() => {
     try {
@@ -36,17 +63,91 @@ function useLocalStorage(key, initial) {
     } catch { return initial; }
   });
   const set = useCallback(v => {
-    setVal(v);
-    try { localStorage.setItem(key, JSON.stringify(v)); } catch {}
+    setVal(prev => {
+      const next = typeof v === 'function' ? v(prev) : v;
+      try { localStorage.setItem(key, JSON.stringify(next)); } catch {}
+      return next;
+    });
   }, [key]);
   return [val, set];
 }
 
-function Input({ label, type = 'text', value, onChange, placeholder, className = '' }) {
+// Every request that changes something carries this header (the server refuses others).
+async function api(path, body) {
+  const res = await fetch(path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Local-Encoder': '1' },
+    body: JSON.stringify(body || {}),
+  });
+  let data = null;
+  try { data = await res.json(); } catch {}
+  return { ok: res.ok, status: res.status, data };
+}
+
+function normUrl(u) {
+  let url = (u || '').trim();
+  if (!url) return '';
+  if (!/^https?:\/\//i.test(url)) url = 'https://' + url;
+  return url.endsWith('/') ? url : url + '/';
+}
+const siteKey = s => `${s.url}|${s.username}`;
+const hostOf = u => { try { return new URL(u).host; } catch { return u; } };
+const resLabel = r => (r >= 2160 ? '4K' : r + 'p');
+function fmtDuration(s) {
+  s = Math.round(s || 0);
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
+  return h ? `${h}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}` : `${m}:${String(sec).padStart(2, '0')}`;
+}
+function fmtSize(b) {
+  if (!b) return '';
+  return b >= 1073741824 ? (b / 1073741824).toFixed(2) + ' GB' : (b / 1048576).toFixed(1) + ' MB';
+}
+const VIDEO_EXT = /\.(mp4|mkv|mov|avi|webm|flv|wmv|m4v|mpg|mpeg|ts|mts|m2ts|3gp|ogv|vob)$/i;
+const isVideoFile = f => (f.type || '').startsWith('video/') || VIDEO_EXT.test(f.name);
+
+// Error codes that need a new login, and the ones a new attempt cannot fix.
+const RECONNECT_CODES = ['wrong_password', 'login_error', 'session_expired', 'cannot_upload', 'refused'];
+const NO_RETRY_CODES = ['audio_only', 'playlist_link', 'live_link', 'invalid_url', 'download_private',
+  'download_geo', 'download_unavailable', 'download_unsupported', 'source_missing', 'unreadable_file'];
+const BLOCKING_PREVIEW = ['invalid_url', 'playlist_link', 'live_link'];
+
+// Mirror of Job._apply in server.py: one event updates one job.
+function applyEvent(j, ev, d) {
+  const n = { ...j };
+  const { job_id, ...rest } = d;
+  if (ev === 'log') n.logs = [...(j.logs || []), `[${new Date().toLocaleTimeString()}] ${d.msg}`].slice(-400);
+  else if (ev === 'progress') {
+    if (j.pct && d.step in j.pct) {
+      n.pct = { ...j.pct, [d.step]: Math.max(0, Math.min(100, d.pct | 0)) };
+      n.stage = d.step;
+    }
+  } else if (ev === 'info') {
+    const { title, thumbnail, ...info } = rest;
+    if (title) n.title = title;
+    if (thumbnail) n.thumbnail = thumbnail;
+    n.info = { ...(j.info || {}), ...info };
+    if ('has_files' in info) n.has_files = info.has_files;
+  } else if (ev === 'notice') {
+    if (!(j.notices || []).some(x => x.code === rest.code)) n.notices = [...(j.notices || []), rest];
+  } else if (ev === 'status') {
+    n.status = d.status;
+    if (d.status === 'pending') { n.error = null; n.result = null; }
+  } else if (ev === 'done') {
+    n.status = 'done'; n.result = rest; n.pct = { download: 100, encode: 100, upload: 100 };
+  } else if (ev === 'error' || ev === 'cancelled') {
+    n.status = ev; n.error = rest;
+  }
+  return n;
+}
+
+// ── Small components ──────────────────────────────────────────────────────
+function Input({ label, type = 'text', value, onChange, placeholder, onEnter, autoFocus, className = '' }) {
   return (
     <label className="block">
       {label && <span className="text-xs text-slate-400 mb-1 block">{label}</span>}
       <input type={type} value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder}
+        autoFocus={autoFocus}
+        onKeyDown={e => { if (e.key === 'Enter' && onEnter) onEnter(); }}
         className={cls('w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-100',
           'focus:outline-none focus:border-brand focus:ring-1 focus:ring-brand transition', className)} />
     </label>
@@ -65,15 +166,33 @@ function Select({ label, value, onChange, options }) {
   );
 }
 
-function Btn({ children, onClick, disabled, variant = 'primary', size = 'md' }) {
-  const base = 'rounded-lg font-semibold transition disabled:opacity-40 disabled:cursor-not-allowed';
-  const sz = { sm: 'px-3 py-1.5 text-xs', md: 'px-4 py-2 text-sm', lg: 'px-6 py-2.5 text-base' }[size];
-  const v = { primary: 'bg-brand hover:bg-brand-dark text-white', success: 'bg-emerald-600 hover:bg-emerald-500 text-white', ghost: 'bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200' }[variant];
-  return <button onClick={onClick} disabled={disabled} className={cls(base, sz, v)}>{children}</button>;
+function Btn({ children, onClick, disabled, variant = 'primary', size = 'md', title, className = '' }) {
+  const base = 'inline-flex items-center justify-center gap-1.5 rounded-lg font-semibold transition disabled:opacity-40 disabled:cursor-not-allowed';
+  const sz = { xs: 'px-2 py-1 text-xs', sm: 'px-3 py-1.5 text-xs', md: 'px-4 py-2 text-sm', lg: 'px-6 py-2.5 text-base' }[size];
+  const v = {
+    primary: 'bg-brand hover:bg-brand-dark text-white',
+    success: 'bg-emerald-600 hover:bg-emerald-500 text-white',
+    ghost: 'bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200',
+    danger: 'bg-slate-800 hover:bg-red-900/60 border border-slate-700 text-red-300',
+    link: 'text-slate-400 hover:text-slate-200',
+  }[variant];
+  return <button type="button" onClick={onClick} disabled={disabled} title={title} className={cls(base, sz, v, className)}>{children}</button>;
 }
 
 function Card({ children, className = '' }) {
-  return <div className={cls('rounded-xl border border-slate-800 bg-slate-900/60 p-5', className)}>{children}</div>;
+  return <div className={cls('rounded-xl border border-slate-800 bg-slate-900/60 p-4', className)}>{children}</div>;
+}
+
+function StepTitle({ n, title, done }) {
+  return (
+    <h2 className="text-sm font-bold text-slate-200 mb-3 flex items-center gap-2">
+      <span className={cls('inline-flex items-center justify-center w-6 h-6 rounded-full text-xs font-bold',
+        done ? 'bg-emerald-600 text-white' : 'bg-brand text-white')}>
+        {done ? <Ico name="checkmark" size={13} /> : n}
+      </span>
+      {title}
+    </h2>
+  );
 }
 
 function StepRow({ label, pct, color }) {
@@ -83,34 +202,42 @@ function StepRow({ label, pct, color }) {
       <div className="flex-1 h-1.5 rounded-full bg-slate-800 overflow-hidden">
         <div className={cls('h-full rounded-full transition-all duration-300', color)} style={{ width: pct + '%' }} />
       </div>
-      <span className="w-8 text-right text-xs text-slate-500">{pct}%</span>
+      <span className="w-9 text-right text-xs text-slate-500">{pct}%</span>
     </div>
   );
 }
 
-function Badge({ ok, text }) {
-  if (text === null) return null;
-  return <span className={cls('inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-bold', ok ? 'bg-emerald-900/60 text-emerald-400' : 'bg-red-900/60 text-red-400')}>{ok ? '✓' : '✗'} {text}</span>;
-}
-
 const ICONS = {
-  server:        () => <><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><circle cx="6" cy="6" r="1" fill="currentColor" stroke="none"/><circle cx="6" cy="18" r="1" fill="currentColor" stroke="none"/></>,
-  film:          () => <><rect x="2" y="2" width="20" height="20" rx="2.18"/><line x1="7" y1="2" x2="7" y2="22"/><line x1="17" y1="2" x2="17" y2="22"/><line x1="2" y1="12" x2="22" y2="12"/><line x1="2" y1="7" x2="7" y2="7"/><line x1="2" y1="17" x2="7" y2="17"/><line x1="17" y1="17" x2="22" y2="17"/><line x1="17" y1="7" x2="22" y2="7"/></>,
-  list:          () => <><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></>,
-  wifi:          () => <><path d="M5 12.55a11 11 0 0114.08 0"/><path d="M1.42 9a16 16 0 0121.16 0"/><path d="M8.53 16.11a6 6 0 016.95 0"/><circle cx="12" cy="20" r="1" fill="currentColor" stroke="none"/></>,
-  link:          () => <><path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/></>,
-  upload:        () => <><polyline points="16 16 12 12 8 16"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.39 18.39A5 5 0 0018 9h-1.26A8 8 0 103 16.3"/></>,
-  folder:        () => <><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/></>,
-  plus:          () => <><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></>,
-  alert:         () => <><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></>,
-  check:         () => <><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></>,
-  xcircle:       () => <><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></>,
-  clock:         () => <><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></>,
-  loader:        () => <path d="M21 12a9 9 0 11-6.219-8.56"/>,
-  extlink:       () => <><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></>,
-  tv:            () => <><rect x="2" y="7" width="20" height="15" rx="2" ry="2"/><polyline points="17 2 12 7 7 2"/></>,
-  timer:         () => <><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></>,
-  hdd:           () => <><line x1="22" y1="12" x2="2" y2="12"/><path d="M5.45 5.11L2 12v6a2 2 0 002 2h16a2 2 0 002-2v-6l-3.45-6.89A2 2 0 0016.76 4H7.24a2 2 0 00-1.79 1.11z"/><line x1="6" y1="16" x2="6.01" y2="16"/><line x1="10" y1="16" x2="10.01" y2="16"/></>,
+  server:    () => <><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><circle cx="6" cy="6" r="1" fill="currentColor" stroke="none"/><circle cx="6" cy="18" r="1" fill="currentColor" stroke="none"/></>,
+  film:      () => <><rect x="2" y="2" width="20" height="20" rx="2.18"/><line x1="7" y1="2" x2="7" y2="22"/><line x1="17" y1="2" x2="17" y2="22"/><line x1="2" y1="12" x2="22" y2="12"/><line x1="2" y1="7" x2="7" y2="7"/><line x1="2" y1="17" x2="7" y2="17"/><line x1="17" y1="17" x2="22" y2="17"/><line x1="17" y1="7" x2="22" y2="7"/></>,
+  list:      () => <><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></>,
+  wifi:      () => <><path d="M5 12.55a11 11 0 0114.08 0"/><path d="M1.42 9a16 16 0 0121.16 0"/><path d="M8.53 16.11a6 6 0 016.95 0"/><circle cx="12" cy="20" r="1" fill="currentColor" stroke="none"/></>,
+  link:      () => <><path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/></>,
+  upload:    () => <><polyline points="16 16 12 12 8 16"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.39 18.39A5 5 0 0018 9h-1.26A8 8 0 103 16.3"/></>,
+  folder:    () => <path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/>,
+  plus:      () => <><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></>,
+  alert:     () => <><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></>,
+  check:     () => <><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></>,
+  checkmark: () => <polyline points="20 6 9 17 4 12"/>,
+  xcircle:   () => <><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></>,
+  x:         () => <><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></>,
+  loader:    () => <path d="M21 12a9 9 0 11-6.219-8.56"/>,
+  extlink:   () => <><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></>,
+  tv:        () => <><rect x="2" y="7" width="20" height="15" rx="2" ry="2"/><polyline points="17 2 12 7 7 2"/></>,
+  timer:     () => <><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></>,
+  hdd:       () => <><line x1="22" y1="12" x2="2" y2="12"/><path d="M5.45 5.11L2 12v6a2 2 0 002 2h16a2 2 0 002-2v-6l-3.45-6.89A2 2 0 0016.76 4H7.24a2 2 0 00-1.79 1.11z"/><line x1="6" y1="16" x2="6.01" y2="16"/><line x1="10" y1="16" x2="10.01" y2="16"/></>,
+  globe:     () => <><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/></>,
+  trash:     () => <><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2"/></>,
+  copy:      () => <><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></>,
+  edit:      () => <><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 013 3L7 19l-4 1 1-4z"/></>,
+  refresh:   () => <><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></>,
+  stop:      () => <rect x="6" y="6" width="12" height="12" rx="1"/>,
+  chevdown:  () => <polyline points="6 9 12 15 18 9"/>,
+  chevright: () => <polyline points="9 18 15 12 9 6"/>,
+  help:      () => <><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 015.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></>,
+  logout:    () => <><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></>,
+  cpu:       () => <><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><line x1="9" y1="1" x2="9" y2="4"/><line x1="15" y1="1" x2="15" y2="4"/><line x1="9" y1="20" x2="9" y2="23"/><line x1="15" y1="20" x2="15" y2="23"/><line x1="20" y1="9" x2="23" y2="9"/><line x1="20" y1="14" x2="23" y2="14"/><line x1="1" y1="9" x2="4" y2="9"/><line x1="1" y1="14" x2="4" y2="14"/></>,
+  info:      () => <><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></>,
 };
 function Ico({ name, size = 14, className = '' }) {
   const Content = ICONS[name];
@@ -127,442 +254,833 @@ function LogScroll({ logs }) {
   const ref = useRef(null);
   useEffect(() => { if (ref.current) ref.current.scrollTop = ref.current.scrollHeight; }, [logs]);
   return (
-    <div ref={ref} className="log-scroll bg-slate-950 rounded-lg p-3 h-36 overflow-y-auto font-mono text-xs text-slate-400 space-y-0.5">
-      {logs.map((l, i) => <div key={i}>{l}</div>)}
+    <div ref={ref} className="log-scroll bg-slate-950 rounded-lg p-3 max-h-48 overflow-y-auto font-mono text-xs text-slate-400 space-y-0.5">
+      {logs && logs.length ? logs.map((l, i) => <div key={i}>{l}</div>) : <div>{t('job.no_logs')}</div>}
     </div>
   );
 }
 
-const TABS = ['URL', 'File Upload'];
+// ── Step 1: the site ──────────────────────────────────────────────────────
+function SitePanel({ sites, activeKey, conn, form, setForm, showMore, setShowMore, editing, logoOk, setLogoOk,
+                     onConnect, onSelect, onRemove, onNew, onDisconnect, onSwitch, onCancelEdit }) {
+  const connected = conn.state === 'ok';
+  if (connected && !editing) {
+    const s = conn.site || {};
+    const res = s.resolutions || [];
+    const caps = [
+      s.hls && t('site.cap_hls'),
+      t('site.cap_mp4'),
+      s.mp3 && t('site.cap_mp3'),
+      res.length && t('site.cap_upto', { res: resLabel(Math.max(...res)) }),
+      s.storage_left_minutes != null && t('site.cap_storage', { min: s.storage_left_minutes }),
+    ].filter(Boolean);
+    return (
+      <div className="space-y-3">
+        <div className="flex items-center gap-3">
+          {conn.logoUrl && logoOk
+            ? <img src={conn.logoUrl} alt="" className="h-9 max-w-[90px] object-contain" onError={() => setLogoOk(false)} />
+            : <span className="w-9 h-9 rounded-lg bg-slate-800 flex items-center justify-center"><Ico name="globe" size={16} className="text-brand" /></span>}
+          <div className="min-w-0">
+            <p className="text-sm font-semibold text-slate-100 truncate">{t('site.connected_as', { name: conn.name })}</p>
+            <p className="text-xs text-slate-400 truncate">{s.host}</p>
+          </div>
+        </div>
+        <div className="rounded-lg bg-slate-950/60 border border-slate-800 px-3 py-2">
+          <p className="text-[11px] uppercase tracking-wider text-slate-500 mb-1">{t('site.receives')}</p>
+          <div className="flex flex-wrap gap-1.5">
+            {caps.map(c => <span key={c} className="rounded-full bg-slate-800 px-2 py-0.5 text-xs text-slate-300">{c}</span>)}
+          </div>
+        </div>
+        <div className="flex gap-2">
+          <Btn variant="ghost" size="sm" onClick={onSwitch}><Ico name="refresh" size={12} />{t('site.switch')}</Btn>
+          <Btn variant="link" size="sm" onClick={onDisconnect}><Ico name="logout" size={12} />{t('site.disconnect')}</Btn>
+        </div>
+      </div>
+    );
+  }
+  const busy = conn.state === 'connecting';
+  return (
+    <div className="space-y-3">
+      {sites.length > 0 && (
+        <div>
+          <p className="text-xs text-slate-400 mb-1">{t('site.saved')}</p>
+          <div className="space-y-1">
+            {sites.map(s => (
+              <div key={siteKey(s)} className={cls('flex items-center gap-2 rounded-lg border px-2 py-1.5',
+                siteKey(s) === activeKey ? 'border-brand bg-brand/10' : 'border-slate-800 bg-slate-900')}>
+                <button type="button" onClick={() => onSelect(s)} className="flex-1 min-w-0 text-left">
+                  <span className="block text-sm text-slate-100 truncate">{hostOf(s.url)}</span>
+                  <span className="block text-xs text-slate-500 truncate">{s.username}</span>
+                </button>
+                <button type="button" title={t('site.remove')} onClick={() => onRemove(s)}
+                  className="p-1 text-slate-500 hover:text-red-400"><Ico name="trash" size={13} /></button>
+              </div>
+            ))}
+          </div>
+          <Btn variant="link" size="xs" className="mt-1" onClick={onNew}><Ico name="plus" size={11} />{t('site.add_new')}</Btn>
+        </div>
+      )}
+      <Input label={t('site.address')} type="url" value={form.url} placeholder={t('site.address_ph')}
+        onChange={v => setForm(f => ({ ...f, url: v }))} />
+      <div className="grid grid-cols-2 gap-2">
+        <Input label={t('site.user')} value={form.user} onChange={v => setForm(f => ({ ...f, user: v }))} />
+        <Input label={t('site.password')} type="password" value={form.password} onEnter={onConnect}
+          onChange={v => setForm(f => ({ ...f, password: v }))} />
+      </div>
+      <div>
+        <button type="button" onClick={() => setShowMore(!showMore)} className="text-xs text-slate-400 hover:text-slate-200 inline-flex items-center gap-1">
+          <Ico name={showMore ? 'chevdown' : 'chevright'} size={12} />{t('site.more')}
+        </button>
+        {showMore && (
+          <div className="mt-2 pl-4">
+            <label className="flex items-start gap-2 text-xs text-slate-300 cursor-pointer select-none">
+              <input type="checkbox" checked={form.sslVerify} onChange={e => setForm(f => ({ ...f, sslVerify: e.target.checked }))} className="accent-brand mt-0.5" />
+              <span>{t('site.verify')}<span className="block text-slate-500">{t('site.verify_hint')}</span></span>
+            </label>
+          </div>
+        )}
+      </div>
+      {conn.hintUser && conn.state === 'none' && <p className="text-xs text-amber-300">{t('site.password_needed', { user: conn.hintUser })}</p>}
+      {conn.state === 'error' && (
+        <p className="text-xs text-red-300 flex gap-1.5"><Ico name="alert" size={13} className="mt-0.5" />{errText(conn.error)}</p>
+      )}
+      <div className="flex gap-2">
+        <Btn onClick={onConnect} disabled={busy || !form.url.trim() || !form.user.trim() || !form.password}>
+          <Ico name="wifi" size={13} />{busy ? t('site.connecting') : t('site.connect')}
+        </Btn>
+        {connected && <Btn variant="ghost" onClick={onCancelEdit}>{t('site.cancel')}</Btn>}
+      </div>
+    </div>
+  );
+}
 
+// ── Queue item ────────────────────────────────────────────────────────────
+function stageText(job) {
+  const p = job.pct || {};
+  const info = job.info || {};
+  switch (job.stage) {
+    case 'encode':
+      return info.encoder_hardware
+        ? t('stage.encode_with', { name: codecName(info.encoder_key, info.encoder), pct: p.encode || 0 })
+        : t('stage.encode', { pct: p.encode || 0 });
+    case 'upload':
+      return t('stage.upload', { pct: p.upload || 0 });
+    case 'download':
+      return job.kind === 'file' ? t('stage.receive', { pct: p.download || 0 }) : t('stage.download', { pct: p.download || 0 });
+    default:
+      return t('stage.starting');
+  }
+}
+
+const STATUS_STYLE = {
+  pending:   ['text-slate-400', 'bg-slate-800'],
+  running:   ['text-amber-300', 'bg-amber-900/40'],
+  done:      ['text-emerald-300', 'bg-emerald-900/40'],
+  error:     ['text-red-300', 'bg-red-900/40'],
+  cancelled: ['text-slate-300', 'bg-slate-800'],
+};
+
+function JobCard({ job, onAction, expanded, onToggle }) {
+  const pct = job.pct || { download: 0, encode: 0, upload: 0 };
+  const info = job.info || {};
+  const [tc, bc] = STATUS_STYLE[job.status] || STATUS_STYLE.pending;
+  const err = job.error;
+  const code = err && err.code;
+  const canRetry = (job.status === 'error' || job.status === 'cancelled') && !NO_RETRY_CODES.includes(code);
+  const needsLogin = job.status === 'error' && RECONNECT_CODES.includes(code);
+  const hasFiles = job.has_files;
+  return (
+    <div className="rounded-lg border border-slate-700 bg-slate-800/40 p-3 space-y-2">
+      <div className="flex items-start gap-3">
+        {job.thumbnail
+          ? <img src={job.thumbnail} alt="" className="w-20 h-12 rounded object-cover shrink-0 bg-slate-700" />
+          : <span className="w-20 h-12 rounded bg-slate-900 flex items-center justify-center shrink-0"><Ico name="film" size={18} className="text-slate-600" /></span>}
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-medium text-slate-100 truncate" title={job.title || job.source}>{job.title || job.source}</p>
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-slate-500 mt-0.5">
+            <span className={cls('rounded-full px-2 py-0.5 font-semibold', tc, bc)}>
+              {job.status === 'running' && <Ico name="loader" size={10} className="animate-spin mr-1" />}
+              {t('status.' + job.status)}
+            </span>
+            <span className="inline-flex items-center gap-1"><Ico name="globe" size={11} />{job.site}</span>
+            {info.duration_s > 0 && <span className="inline-flex items-center gap-1"><Ico name="timer" size={11} />{fmtDuration(info.duration_s)}</span>}
+            {info.file_size_bytes > 0 && <span className="inline-flex items-center gap-1"><Ico name="hdd" size={11} />{fmtSize(info.file_size_bytes)}</span>}
+          </div>
+        </div>
+      </div>
+
+      {job.status === 'running' && <p className="text-xs text-slate-300">{stageText(job)}</p>}
+      {job.status === 'pending' && <p className="text-xs text-slate-400">{t('stage.waiting')}</p>}
+      {job.status === 'done' && <p className="text-xs text-emerald-300 inline-flex items-center gap-1.5"><Ico name="check" size={12} />{t('stage.done')}</p>}
+      {(job.status === 'error' || job.status === 'cancelled') && (
+        <div className={cls('text-xs rounded-lg px-3 py-2', job.status === 'error' ? 'bg-red-950/40 text-red-200' : 'bg-slate-900 text-slate-300')}>
+          <p className="flex gap-1.5"><Ico name={job.status === 'error' ? 'alert' : 'info'} size={13} className="mt-0.5" />{errText(err)}</p>
+          {canRetry && hasFiles && <p className="mt-1 text-slate-400">{t('job.kept')}</p>}
+        </div>
+      )}
+
+      {job.status === 'running' && (
+        <div className="space-y-1.5">
+          <StepRow label={t('bar.download')} pct={pct.download} color="bg-brand" />
+          <StepRow label={t('bar.encode')} pct={pct.encode} color="bg-amber-500" />
+          <StepRow label={t('bar.upload')} pct={pct.upload} color="bg-emerald-500" />
+        </div>
+      )}
+
+      {(job.notices || []).map(n => (
+        <p key={n.code} className="text-xs text-amber-200 bg-amber-950/30 rounded-lg px-3 py-1.5 flex gap-1.5">
+          <Ico name="info" size={13} className="mt-0.5" />{t('notice.' + n.code, n.params || {})}
+        </p>
+      ))}
+
+      <div className="flex flex-wrap gap-1.5 pt-0.5">
+        {job.status === 'done' && job.result && <>
+          <a href={job.result.url} target="_blank" rel="noopener noreferrer"
+             className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 text-white">
+            <Ico name="extlink" size={12} />{t('job.open')}</a>
+          <a href={job.result.edit_url} target="_blank" rel="noopener noreferrer"
+             className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200">
+            <Ico name="edit" size={12} />{t('job.edit')}</a>
+          <Btn variant="ghost" size="sm" onClick={() => onAction(job, 'copy')}><Ico name="copy" size={12} />{t('job.copy')}</Btn>
+        </>}
+        {needsLogin && <Btn size="sm" onClick={() => onAction(job, 'reconnect')}><Ico name="wifi" size={12} />{t('job.reconnect')}</Btn>}
+        {canRetry && <Btn size="sm" variant={needsLogin ? 'ghost' : 'primary'} onClick={() => onAction(job, 'retry')}><Ico name="refresh" size={12} />{t('job.retry')}</Btn>}
+        {(job.status === 'running' || job.status === 'pending') &&
+          <Btn variant="danger" size="sm" onClick={() => onAction(job, 'cancel')}><Ico name="stop" size={12} />{t('job.cancel')}</Btn>}
+        {hasFiles && job.status !== 'done' &&
+          <Btn variant="ghost" size="sm" onClick={() => onAction(job, 'folder')}><Ico name="folder" size={12} />{t('job.folder')}</Btn>}
+        {job.status === 'error' &&
+          <Btn variant="ghost" size="sm" onClick={() => onAction(job, 'report')}><Ico name="help" size={12} />{t('job.report')}</Btn>}
+        <Btn variant="link" size="sm" onClick={onToggle}>
+          <Ico name={expanded ? 'chevdown' : 'chevright'} size={12} />{expanded ? t('job.hide_details') : t('job.details')}
+        </Btn>
+        {job.status !== 'running' && job.status !== 'pending' &&
+          <Btn variant="link" size="sm" className="ml-auto" onClick={() => onAction(job, 'remove')}><Ico name="trash" size={12} />{t('job.remove')}</Btn>}
+      </div>
+
+      {expanded && <LogScroll logs={job.logs} />}
+    </div>
+  );
+}
+
+function TransferCard({ tr }) {
+  return (
+    <div className="rounded-lg border border-slate-700 bg-slate-800/40 p-3 space-y-2">
+      <div className="flex items-center gap-3">
+        <span className="w-20 h-12 rounded bg-slate-900 flex items-center justify-center shrink-0"><Ico name="upload" size={18} className="text-brand" /></span>
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-medium text-slate-100 truncate">{tr.name}</p>
+          <p className="text-xs text-slate-400">{t('stage.receive', { pct: tr.pct })}</p>
+        </div>
+      </div>
+      <StepRow label={t('bar.download')} pct={tr.pct} color="bg-brand" />
+    </div>
+  );
+}
+
+// ── App ───────────────────────────────────────────────────────────────────
 function App() {
-  const [serverUrl, setServerUrl] = useLocalStorage('ave_server_url', '');
-  const [username, setUsername]   = useLocalStorage('ave_username', '');
-  // The password is only kept in memory and sent once to log in; the local server
-  // keeps the AVideo login token and the browser keeps only a session id.
-  const [password, setPassword]   = useState('');
-  const [sessionId, setSessionId] = useLocalStorage('ave_session_id', '');
-  const [sslVerify, setSslVerify] = useLocalStorage('ave_ssl_verify', true);
-  const [connStatus, setConnStatus] = useState(null);
-  const [testing, setTesting] = useState(false);
+  const [lang, setLang] = useLocalStorage('ave_lang', detectLang());
+  LANG = LANGS.includes(lang) ? lang : 'en';
+  useEffect(() => { document.documentElement.lang = LANG; }, [lang]);
+
+  // Sites (no passwords are stored: only the address, the user and the local session id)
+  const [sites, setSites] = useLocalStorage('ave_sites', []);
+  const [activeKey, setActiveKey] = useLocalStorage('ave_active_site', '');
+  const [form, setForm] = useState({ url: '', user: '', password: '', sslVerify: true });
+  const [showMore, setShowMore] = useState(false);
+  const [conn, setConn] = useState({ state: 'none' });
+  const [editing, setEditing] = useState(false);
+  const [logoOk, setLogoOk] = useState(true);
   const [categories, setCategories] = useState([]);
-  const [catsLoaded, setCatsLoaded] = useState(false);
 
-  const [tab, setTab]             = useLocalStorage('ave_tab', 'URL');
-  const [videoUrl, setVideoUrl]   = useState('');
-  const [localFile, setLocalFile] = useState(null);
-  const [vidTitle, setVidTitle]   = useState('');
-  const [vidDesc, setVidDesc]     = useState('');
-  // Category key is scoped to server+user so each site remembers its own last category
-  const catKey = `ave_cat_id::${serverUrl}::${username}`;
-  const [catId, setCatId]         = useLocalStorage(catKey, '0');
-  const [format, setFormat]       = useLocalStorage('ave_format', 'auto');
-  // resolutions: stored as JSON-encoded int array, e.g. [360, 720]
-  const [resolutionsRaw, setResolutionsRaw] = useLocalStorage('ave_resolutions', '[]');
-  const resolutions = (() => { try { return JSON.parse(resolutionsRaw); } catch { return []; } })();
-  const setResolutions = arr => setResolutionsRaw(JSON.stringify(arr));
-  function toggleResolution(r) {
-    setResolutions(resolutions.includes(r) ? resolutions.filter(x => x !== r) : [...resolutions, r].sort((a,b)=>a-b));
-  }
+  // Add form
+  const [tab, setTab] = useLocalStorage('ave_add_tab', 'link');
+  const [videoUrl, setVideoUrl] = useState('');
+  const [preview, setPreview] = useState({ state: 'idle' });
+  const [files, setFiles] = useState([]);
+  const [title, setTitle] = useState('');
+  const [desc, setDesc] = useState('');
+  const [catBySite, setCatBySite] = useLocalStorage('ave_cat_by_site', {});
+  const [format, setFormat] = useLocalStorage('ave_format', 'auto');
+  const [qualities, setQualities] = useLocalStorage('ave_qualities', []);
+  const [useGpu, setUseGpu] = useLocalStorage('ave_use_gpu', true);
+  const [showAdvanced, setShowAdvanced] = useLocalStorage('ave_show_advanced', false);
+  const fileInput = useRef(null);
 
-
-  // Job queue state: array of { job_id, status, title, thumbnail, pct, logs, doneInfo, jobError, videoInfo }
-  const [jobQueue, setJobQueue] = useState([]);
-  const openSseRefs = useRef({});  // job_id -> EventSource
-
-  function updateJob(job_id, patch) {
-    setJobQueue(prev => prev.map(j => j.job_id === job_id ? { ...j, ...patch } : j));
-  }
-
-  function openSseForJob(job_id) {
-    if (openSseRefs.current[job_id]) return;
-    const es = new EventSource(`/api/import/${job_id}/progress`);
-    openSseRefs.current[job_id] = es;
-    const appendJobLog = msg => {
-      const now = new Date().toLocaleTimeString();
-      setJobQueue(prev => prev.map(j => j.job_id === job_id
-        ? { ...j, logs: [...(j.logs || []), `[${now}] ${msg}`] } : j));
-    };
-    es.addEventListener('log', e => appendJobLog(JSON.parse(e.data).msg));
-    es.addEventListener('info', e => {
-      const d = JSON.parse(e.data);
-      setJobQueue(prev => prev.map(j => j.job_id === job_id
-        ? { ...j, videoInfo: { ...(j.videoInfo || {}), ...d }, title: d.title || j.title, thumbnail: d.thumbnail || j.thumbnail }
-        : j));
-    });
-    es.addEventListener('progress', e => {
-      const d = JSON.parse(e.data);
-      setJobQueue(prev => prev.map(j => j.job_id === job_id
-        ? { ...j, pct: { ...(j.pct || {}), [d.step]: d.pct } } : j));
-      appendJobLog(d.msg);
-    });
-    es.addEventListener('status', e => {
-      const d = JSON.parse(e.data);
-      updateJob(job_id, { status: d.status });
-    });
-    es.addEventListener('done', e => {
-      const d = JSON.parse(e.data);
-      updateJob(job_id, { status: 'done', doneInfo: d, pct: { download: 100, encode: 100, upload: 100 } });
-      es.close(); delete openSseRefs.current[job_id];
-    });
-    es.addEventListener('error', e => {
-      if (e.data) updateJob(job_id, { status: 'error', jobError: JSON.parse(e.data).msg });
-      es.close(); delete openSseRefs.current[job_id];
-    });
-    es.onerror = () => { es.close(); delete openSseRefs.current[job_id]; };
-  }
+  // Queue
+  const [jobs, setJobs] = useState([]);
+  const [transfers, setTransfers] = useState([]);
+  const [expanded, setExpanded] = useState({});
+  const jobsRef = useRef(jobs);
+  jobsRef.current = jobs;
 
   const [versionInfo, setVersionInfo] = useState(null);
+  const [system, setSystem] = useState(null);
+  const [toast, setToast] = useState(null);
+  const [dragging, setDragging] = useState(false);
 
-  // On load: forget passwords saved by older versions, reuse a still-valid session,
-  // and ask the local server whether a newer Local Encoder release exists.
-  useEffect(() => {
-    try { localStorage.removeItem('ave_password'); } catch {}
-    if (sessionId) resumeSession();
-    fetch('/api/version').then(r => r.json()).then(setVersionInfo).catch(() => {});
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  const connected = conn.state === 'ok';
+  const site = conn.site || {};
+  const catId = connected ? String(catBySite[conn.key] ?? '0') : '0';
 
-  function disconnect() {
-    setSessionId(''); setConnStatus(null); setCategories([]); setCatsLoaded(false);
+  function showToast(text, ms = 5000) {
+    setToast(text);
+    clearTimeout(showToast.timer);
+    showToast.timer = setTimeout(() => setToast(null), ms);
   }
 
-  function applyConnection(data) {
-    setSessionId(data.session_id);
-    setConnStatus({ ok: true, text: data.name || 'Connected', logoUrl: data.logo_url || null });
+  function updateSite(key, patch) {
+    setSites(prev => prev.map(s => (siteKey(s) === key ? { ...s, ...patch } : s)));
+  }
+
+  function applyConnection(data, base) {
+    const entry = { url: data.site.url, username: base.username, sslVerify: base.sslVerify, sessionId: data.session_id };
+    const key = siteKey(entry);
+    setSites(prev => [entry, ...prev.filter(s => siteKey(s) !== key)]);
+    setActiveKey(key);
+    setLogoOk(true);
+    setConn({ state: 'ok', key, name: data.name, logoUrl: data.logo_url, site: data.site, sessionId: data.session_id });
     const cats = data.categories || [];
     setCategories(cats);
-    if (cats.length > 0) {
-      // Keep the saved category if it still exists on this server, else fall back to first
-      const saved = localStorage.getItem(catKey);
-      const savedId = saved ? JSON.parse(saved) : null;
-      const exists = cats.some(c => String(c.id) === String(savedId));
-      if (!exists) setCatId(String(cats[0].id));
+    setCatBySite(prev => (cats.some(c => String(c.id) === String(prev[key])) ? prev : { ...prev, [key]: '0' }));
+    setEditing(false);
+  }
+
+  async function selectSite(s) {
+    setForm({ url: s.url, user: s.username, password: '', sslVerify: s.sslVerify !== false });
+    setActiveKey(siteKey(s));
+    if (s.sessionId) {
+      setConn({ state: 'connecting' });
+      try {
+        const r = await api('/api/session', { session_id: s.sessionId });
+        if (r.ok && r.data && r.data.ok) { applyConnection(r.data, { username: s.username, sslVerify: s.sslVerify !== false }); return; }
+      } catch {}
+      updateSite(siteKey(s), { sessionId: '' });
     }
-    setCatsLoaded(true);
+    setConn({ state: 'none', hintUser: s.username });
+    setEditing(true);
   }
 
-  async function resumeSession() {
+  async function connect() {
+    const url = normUrl(form.url);
+    const user = form.user.trim();
+    setConn({ state: 'connecting' });
     try {
-      const res = await fetch('/api/session', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ session_id: sessionId }),
-      });
-      if (!res.ok) { disconnect(); return; }
-      applyConnection(await res.json());
-    } catch (e) { disconnect(); }
-  }
-
-  async function testConnection() {
-    setTesting(true); setConnStatus(null); setCatsLoaded(false); setCategories([]);
-    try {
-      const res = await fetch('/api/test-connection', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ server_url: serverUrl, username, password, ssl_verify: sslVerify }),
-      });
-      const data = await res.json();
-      if (data.ok) {
-        applyConnection(data);
-        setPassword('');
+      const r = await api('/api/test-connection', { server_url: url, username: user, password: form.password, ssl_verify: form.sslVerify });
+      if (r.data && r.data.ok) {
+        applyConnection(r.data, { username: user, sslVerify: form.sslVerify });
+        setForm(f => ({ ...f, url, password: '' }));
       } else {
-        setSessionId('');
-        setConnStatus({ ok: false, text: data.error || 'Failed' });
+        setConn({ state: 'error', error: (r.data && r.data.error_info) || { code: 'unknown', params: { detail: (r.data && (r.data.error || r.data.detail)) || '' } } });
       }
-    } catch (e) { setConnStatus({ ok: false, text: 'Could not reach Local Encoder. Is it still running?' }); }
-    finally { setTesting(false); }
+    } catch { setConn({ state: 'error', error: { code: 'connection' } }); }
   }
 
-  async function startImport() {
-    let res;
+  async function disconnect() {
+    if (conn.sessionId) { try { await api('/api/logout', { session_id: conn.sessionId }); } catch {} }
+    if (conn.key) updateSite(conn.key, { sessionId: '' });
+    setForm(f => ({ ...f, password: '' }));
+    setConn({ state: 'none' });
+    setEditing(true);
+  }
+
+  async function removeSite(s) {
+    if (!confirm(t('site.remove_confirm', { site: hostOf(s.url) }))) return;
+    if (s.sessionId) { try { await api('/api/logout', { session_id: s.sessionId }); } catch {} }
+    const key = siteKey(s);
+    setSites(prev => prev.filter(x => siteKey(x) !== key));
+    if (key === activeKey) {
+      setActiveKey('');
+      setConn({ state: 'none' });
+      setForm({ url: '', user: '', password: '', sslVerify: true });
+      setEditing(true);
+    }
+  }
+
+  function sessionExpired() {
+    if (conn.key) updateSite(conn.key, { sessionId: '' });
+    setConn({ state: 'error', error: { code: 'session_expired' } });
+    setEditing(true);
+  }
+
+  // Start: move settings saved by older versions, reconnect to the last site, follow the queue.
+  useEffect(() => {
+    let list = sites;
+    let active = activeKey;
     try {
-      if (tab === 'URL') {
-        res = await fetch('/api/import', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ url: videoUrl, session_id: sessionId,
-            categories_id: parseInt(catId) || 0, title: vidTitle, description: vidDesc,
-            format, resolutions }),
-        });
-      } else {
-        const fd = new FormData();
-        fd.append('file', localFile);
-        [['session_id', sessionId],['categories_id', catId],['title', vidTitle],
-         ['description', vidDesc],['format', format],['resolution', resolutions.join(',')]
-        ].forEach(([k,v]) => fd.append(k, v));
-        res = await fetch('/api/import-file', { method: 'POST', body: fd });
+      localStorage.removeItem('ave_password');
+      const oldUrl = JSON.parse(localStorage.getItem('ave_server_url') || 'null');
+      if (!list.length && oldUrl) {
+        const entry = {
+          url: normUrl(oldUrl),
+          username: JSON.parse(localStorage.getItem('ave_username') || '""'),
+          sslVerify: JSON.parse(localStorage.getItem('ave_ssl_verify') || 'true'),
+          sessionId: JSON.parse(localStorage.getItem('ave_session_id') || '""'),
+        };
+        list = [entry];
+        active = siteKey(entry);
+        setSites(list);
+        setActiveKey(active);
       }
-      if (res.status === 401) {
-        disconnect();
-        setConnStatus({ ok: false, text: 'Please type your password and connect again.' });
-        return;
-      }
-      const data = await res.json();
-      const jid = data.job_id;
-      const label = vidTitle || (tab === 'URL' ? videoUrl : localFile?.name) || jid;
-      // Add to local queue state and immediately open SSE (no polling needed)
-      setJobQueue(prev => [...prev, {
-        job_id: jid, status: 'pending', title: label.slice(0, 80),
-        thumbnail: '', pct: { download: 0, encode: 0, upload: 0 },
-        logs: [], doneInfo: null, jobError: null, videoInfo: null,
-      }]);
-      openSseForJob(jid);
-      // Reset form input but keep settings
-      if (tab === 'URL') setVideoUrl('');
-      else setLocalFile(null);
-      setVidTitle(''); setVidDesc('');
-    } catch (e) { alert('Submit error: ' + e.message); }
+      ['ave_server_url', 'ave_username', 'ave_ssl_verify', 'ave_session_id', 'ave_resolutions', 'ave_tab'].forEach(k => localStorage.removeItem(k));
+    } catch {}
+    const start = list.find(s => siteKey(s) === active) || list[0];
+    if (start) selectSite(start); else setEditing(true);
+
+    fetch('/api/version').then(r => r.json()).then(setVersionInfo).catch(() => {});
+
+    // One stream for the whole queue: it first sends every job, also after a reconnection.
+    const es = new EventSource('/api/events');
+    es.addEventListener('jobs', e => setJobs(JSON.parse(e.data).jobs || []));
+    es.addEventListener('added', e => {
+      const j = JSON.parse(e.data);
+      setJobs(prev => (prev.some(x => x.job_id === j.job_id) ? prev : [...prev, j]));
+    });
+    es.addEventListener('removed', e => {
+      const d = JSON.parse(e.data);
+      setJobs(prev => prev.filter(j => j.job_id !== d.job_id));
+    });
+    ['log', 'progress', 'info', 'notice', 'status', 'done', 'error', 'cancelled'].forEach(ev =>
+      es.addEventListener(ev, e => {
+        if (!e.data) return; // the browser's own connection "error" event has no data
+        const d = JSON.parse(e.data);
+        setJobs(prev => prev.map(j => (j.job_id === d.job_id ? applyEvent(j, ev, d) : j)));
+        if (ev === 'done' || ev === 'error') notifyEnd(ev, d.job_id);
+      }));
+    return () => es.close();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Graphics card detection runs once in the background.
+  useEffect(() => {
+    let stop = false;
+    async function poll() {
+      try {
+        const d = await (await fetch('/api/system')).json();
+        if (stop) return;
+        setSystem(d);
+        if (d.gpu && d.gpu.status !== 'done') setTimeout(poll, 2000);
+      } catch {}
+    }
+    poll();
+    return () => { stop = true; };
+  }, []);
+
+  // Desktop notification when a video ends while the page is hidden.
+  function notifyEnd(ev, jobId) {
+    if (!document.hidden || !('Notification' in window) || Notification.permission !== 'granted') return;
+    const job = jobsRef.current.find(j => j.job_id === jobId);
+    try {
+      new Notification(ev === 'done' ? t('notify.done_title') : t('notify.error_title'),
+        { body: job ? job.title || job.source : '', tag: jobId });
+    } catch {}
+  }
+  function askNotificationPermission() {
+    try { if ('Notification' in window && Notification.permission === 'default') Notification.requestPermission(); } catch {}
   }
 
-  const connOk = connStatus?.ok === true;
-  const canImport = connOk && (tab === 'URL' ? videoUrl.trim() : !!localFile);
+  // Progress in the browser tab title.
+  useEffect(() => {
+    const running = jobs.find(j => j.status === 'running');
+    if (running) {
+      const p = running.pct || {};
+      document.title = `(${Math.round(((p.download || 0) + (p.encode || 0) + (p.upload || 0)) / 3)}%) Local Encoder`;
+    } else if (transfers.length) {
+      document.title = '(…) Local Encoder';
+    } else {
+      document.title = 'Local Encoder';
+    }
+  }, [jobs, transfers]);
 
-  const catOptions = [
-    { value: '0', label: '— none —' },
-    ...categories.map(c => ({ value: String(c.id), label: c.name })),
-  ];
+  // Closing the page while a file is still being copied into Local Encoder would lose it.
+  useEffect(() => {
+    if (!transfers.length) return;
+    const h = e => { e.preventDefault(); e.returnValue = ''; return ''; };
+    window.addEventListener('beforeunload', h);
+    return () => window.removeEventListener('beforeunload', h);
+  }, [transfers.length]);
+
+  // Link preview (title, picture, length) a moment after the user stops typing.
+  useEffect(() => {
+    const url = videoUrl.trim();
+    if (!url) { setPreview({ state: 'idle' }); return; }
+    if (!/^https?:\/\/\S+$/i.test(url)) { setPreview({ state: 'error', error: { code: 'invalid_url' } }); return; }
+    setPreview({ state: 'loading' });
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      try {
+        const r = await api('/api/preview', { url });
+        if (cancelled) return;
+        setPreview(r.data && r.data.ok ? { state: 'ok', data: r.data } : { state: 'error', error: (r.data && r.data.error) || { code: 'unknown' } });
+      } catch { if (!cancelled) setPreview({ state: 'error', error: { code: 'connection' } }); }
+    }, 700);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [videoUrl]);
+
+  // Drag and drop video files anywhere on the page.
+  function addFiles(list) {
+    const videos = list.filter(isVideoFile);
+    if (!videos.length) return;
+    setFiles(prev => [...prev, ...videos.filter(v => !prev.some(p => p.name === v.name && p.size === v.size))]);
+    setTab('files');
+  }
+  const addFilesRef = useRef(addFiles);
+  addFilesRef.current = addFiles;
+  useEffect(() => {
+    let depth = 0;
+    const isFiles = e => Array.from((e.dataTransfer && e.dataTransfer.types) || []).includes('Files');
+    const enter = e => { if (!isFiles(e)) return; e.preventDefault(); depth++; setDragging(true); };
+    const over = e => { if (isFiles(e)) e.preventDefault(); };
+    const leave = e => { if (!isFiles(e)) return; depth = Math.max(0, depth - 1); if (!depth) setDragging(false); };
+    const drop = e => {
+      if (!isFiles(e)) return;
+      e.preventDefault(); depth = 0; setDragging(false);
+      addFilesRef.current(Array.from(e.dataTransfer.files || []));
+    };
+    window.addEventListener('dragenter', enter);
+    window.addEventListener('dragover', over);
+    window.addEventListener('dragleave', leave);
+    window.addEventListener('drop', drop);
+    return () => {
+      window.removeEventListener('dragenter', enter);
+      window.removeEventListener('dragover', over);
+      window.removeEventListener('dragleave', leave);
+      window.removeEventListener('drop', drop);
+    };
+  }, []);
+
+  function currentOptions() {
+    return {
+      session_id: conn.sessionId,
+      categories_id: parseInt(catId) || 0,
+      description: desc,
+      format: site.hls === false && format === 'hls' ? 'auto' : format,
+      resolutions: qualities.filter(q => (site.resolutions || []).includes(q)),
+      use_gpu: !!useGpu,
+    };
+  }
+
+  function sendFile(file, fileTitle, opts) {
+    return new Promise(resolve => {
+      const id = 'tr-' + Math.random().toString(36).slice(2);
+      setTransfers(prev => [...prev, { id, name: file.name, pct: 0 }]);
+      const fd = new FormData();
+      fd.append('file', file);
+      fd.append('session_id', opts.session_id);
+      fd.append('categories_id', String(opts.categories_id));
+      fd.append('title', fileTitle);
+      fd.append('description', opts.description);
+      fd.append('format', opts.format);
+      fd.append('resolution', opts.resolutions.join(','));
+      fd.append('use_gpu', opts.use_gpu ? '1' : '0');
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', '/api/import-file');
+      xhr.setRequestHeader('X-Local-Encoder', '1');
+      xhr.upload.onprogress = e => {
+        if (e.lengthComputable) setTransfers(prev => prev.map(x => (x.id === id ? { ...x, pct: Math.round(e.loaded * 100 / e.total) } : x)));
+      };
+      const finish = () => { setTransfers(prev => prev.filter(x => x.id !== id)); resolve(); };
+      xhr.onload = () => {
+        if (xhr.status === 401) sessionExpired();
+        else if (xhr.status >= 400) showToast(t('err.unknown', { detail: `HTTP ${xhr.status}` }));
+        finish();
+      };
+      xhr.onerror = () => { showToast(t('err.connection')); finish(); };
+      xhr.send(fd);
+    });
+  }
+
+  async function submit() {
+    if (!connected) return;
+    askNotificationPermission();
+    const opts = currentOptions();
+    if (tab === 'link') {
+      try {
+        const r = await api('/api/import', { ...opts, url: videoUrl.trim(), title: title.trim() });
+        if (r.status === 401) { sessionExpired(); return; }
+        if (!r.ok) { showToast((r.data && r.data.detail) || t('err.unknown', { detail: r.status })); return; }
+        setVideoUrl(''); setTitle(''); setDesc('');
+      } catch { showToast(t('err.connection')); }
+    } else {
+      const list = files;
+      const fileTitle = list.length === 1 ? title.trim() : '';
+      setFiles([]); setTitle(''); setDesc('');
+      for (const f of list) await sendFile(f, fileTitle, opts); // one at a time
+    }
+  }
+
+  async function report(jobId) {
+    try {
+      const r = await api('/api/report', { job_id: jobId || '' });
+      if (r.ok && r.data) {
+        window.open(r.data.issue_url, '_blank', 'noopener');
+        showToast(t('report.done'), 9000);
+      } else showToast(t('report.failed'));
+    } catch { showToast(t('report.failed')); }
+  }
+
+  async function jobAction(job, action) {
+    const path = `/api/jobs/${job.job_id}`;
+    try {
+      if (action === 'cancel') {
+        if (job.status === 'running' && !confirm(t('job.cancel_confirm'))) return;
+        await api(`${path}/cancel`);
+      } else if (action === 'retry') {
+        const saved = sites.find(s => s.url === job.site_url && s.sessionId);
+        const sid = connected && site.url === job.site_url ? conn.sessionId : (saved ? saved.sessionId : '');
+        const r = await api(`${path}/retry`, { session_id: sid });
+        if (r.status === 401 || r.status === 400) {
+          showToast(t('toast.reconnect', { site: job.site }));
+          const s = sites.find(x => x.url === job.site_url);
+          if (s) selectSite(s);
+        }
+      } else if (action === 'remove') {
+        if (job.status !== 'done' && job.has_files && !confirm(t('job.remove_confirm'))) return;
+        await api(`${path}/remove`, { delete_files: true });
+      } else if (action === 'folder') {
+        await api(`${path}/open-folder`);
+      } else if (action === 'report') {
+        await report(job.job_id);
+      } else if (action === 'copy') {
+        await navigator.clipboard.writeText(job.result.url);
+        showToast(t('job.copied'), 2500);
+      } else if (action === 'reconnect') {
+        const s = sites.find(x => x.url === job.site_url);
+        if (s) { setForm({ url: s.url, user: s.username, password: '', sslVerify: s.sslVerify !== false }); setActiveKey(siteKey(s)); setConn({ state: 'none', hintUser: s.username }); }
+        else setForm(f => ({ ...f, url: job.site_url, password: '' }));
+        setEditing(true);
+      }
+    } catch { showToast(t('err.connection')); }
+  }
+
+  async function clearDone() {
+    for (const j of jobs.filter(x => x.status === 'done')) {
+      try { await api(`/api/jobs/${j.job_id}/remove`, { delete_files: true }); } catch {}
+    }
+  }
+
+  const blockedPreview = tab === 'link' && preview.state === 'error' && BLOCKING_PREVIEW.includes(preview.error && preview.error.code);
+  const canSubmit = connected && (tab === 'link' ? !!videoUrl.trim() && !blockedPreview : files.length > 0);
+  const catOptions = [{ value: '0', label: t('add.category_none') }, ...categories.map(c => ({ value: String(c.id), label: c.name }))];
+  const siteRes = site.resolutions || [];
+  const gpu = system && system.gpu;
+  const doneCount = jobs.filter(j => j.status === 'done').length;
 
   return (
     <div className="flex flex-col h-screen overflow-hidden">
-
-      {/* ── Top bar ─────────────────────────────────────────────── */}
-      <header className="shrink-0 flex items-center gap-4 px-6 py-2.5 border-b border-slate-800 bg-slate-950/80 backdrop-blur">
-        {/* Logo slot */}
-        <div style={{ width: 140, height: 38 }} className="flex items-center shrink-0">
-          {connStatus?.ok && connStatus.logoUrl
-            ? <img src={connStatus.logoUrl} alt="Site logo" height={38}
-                className="h-full w-auto object-contain"
-                style={{ filter: 'drop-shadow(0 0 3px rgba(0,0,0,0.9)) drop-shadow(0 0 1px rgba(255,255,255,0.6))' }}
-                onError={e => { e.currentTarget.style.visibility = 'hidden'; }} />
-            : <span className="text-base font-bold tracking-tight text-slate-100">Local <span className="text-brand">Encoder</span></span>
-          }
+      {dragging && (
+        <div className="fixed inset-0 z-50 bg-slate-950/80 border-4 border-dashed border-brand flex items-center justify-center pointer-events-none">
+          <p className="text-xl font-semibold text-slate-100 inline-flex items-center gap-3"><Ico name="upload" size={28} className="text-brand" />{t('add.drop_overlay')}</p>
         </div>
+      )}
+
+      {/* ── Top bar ───────────────────────────────────────────── */}
+      <header className="shrink-0 flex items-center gap-3 px-5 py-2.5 border-b border-slate-800 bg-slate-950/80 backdrop-blur">
+        <span className="inline-flex items-center gap-2 text-base font-bold tracking-tight text-slate-100">
+          <span className="w-7 h-7 rounded-lg bg-brand flex items-center justify-center"><svg width="12" height="12" viewBox="0 0 24 24" fill="white"><path d="M6 4l15 8-15 8z"/></svg></span>
+          Local <span className="text-brand -ml-1.5">Encoder</span>
+        </span>
         <div className="flex-1" />
-        {versionInfo?.update_available && (
+        {versionInfo && versionInfo.update_available && (
           <a href={versionInfo.download_url} target="_blank" rel="noopener noreferrer"
             className="inline-flex items-center gap-1.5 rounded-full bg-amber-900/60 px-3 py-1 text-xs font-bold text-amber-300 hover:bg-amber-800/60">
-            <Ico name="extlink" size={12} />New version {versionInfo.latest} available – download
+            <Ico name="extlink" size={12} />{t('header.update', { v: versionInfo.latest })}
           </a>
         )}
+        <label className="inline-flex items-center gap-1.5 text-xs text-slate-400">
+          <Ico name="globe" size={13} />
+          <select value={LANG} onChange={e => setLang(e.target.value)} aria-label="Language"
+            className="bg-transparent text-slate-300 focus:outline-none cursor-pointer">
+            {LANGS.map(l => <option key={l} value={l} className="bg-slate-900">{(window.LE_I18N[l] || {})['lang.name'] || l}</option>)}
+          </select>
+        </label>
+        <Btn variant="link" size="sm" onClick={() => report('')}><Ico name="help" size={13} />{t('header.report')}</Btn>
         {versionInfo && <span className="text-xs text-slate-600">v{versionInfo.version}</span>}
-        {connStatus && <Badge ok={connStatus.ok} text={connStatus.text} />}
       </header>
 
-      {/* ── Two-column body ──────────────────────────────────────── */}
-      <div className="flex flex-1 gap-0 overflow-hidden">
-
-        {/* LEFT: settings + import form */}
-        <aside className="w-[400px] shrink-0 flex flex-col border-r border-slate-800 overflow-y-auto log-scroll bg-slate-950/40">
+      <div className="flex flex-1 overflow-hidden">
+        {/* LEFT: step 1 + step 2 */}
+        <aside className="w-[420px] shrink-0 border-r border-slate-800 overflow-y-auto log-scroll bg-slate-950/40">
           <div className="p-4 space-y-4">
-
-            {/* Server card */}
-            <Card className="!p-4">
-              <h2 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3 flex items-center gap-2">
-                <Ico name="server" className="text-brand" size={13} />AVideo Server
-              </h2>
-              <div className="space-y-2.5">
-                <Input label="Server URL" type="url" value={serverUrl} onChange={v => { setServerUrl(v); if (sessionId) disconnect(); }} placeholder="https://your-avideo.example.com/" />
-                <div className="grid grid-cols-2 gap-2">
-                  <Input label="Username" value={username} onChange={v => { setUsername(v); if (sessionId) disconnect(); }} placeholder="admin" />
-                  <Input label="Password" type="password" value={password} onChange={setPassword} placeholder={connOk ? 'Connected' : '••••••'} />
-                </div>
-                <div className="flex items-center justify-between pt-0.5">
-                  <label className="flex items-center gap-2 text-xs text-slate-400 cursor-pointer select-none">
-                    <input type="checkbox" checked={sslVerify} onChange={e => setSslVerify(e.target.checked)} className="accent-brand" />
-                    Verify SSL
-                  </label>
-                  <Btn onClick={testConnection} disabled={testing || !serverUrl || !username || !password} size="sm">
-                    <span className="inline-flex items-center gap-1.5"><Ico name="wifi" size={12} />{testing ? 'Connecting…' : 'Connect'}</span>
-                  </Btn>
-                </div>
-              </div>
+            <Card>
+              <StepTitle n={1} title={t('step1.title')} done={connected} />
+              <SitePanel sites={sites} activeKey={activeKey} conn={conn} form={form} setForm={setForm}
+                showMore={showMore} setShowMore={setShowMore} editing={editing} logoOk={logoOk} setLogoOk={setLogoOk}
+                onConnect={connect} onSelect={selectSite} onRemove={removeSite}
+                onNew={() => { setForm({ url: '', user: '', password: '', sslVerify: true }); setConn(c => (c.state === 'ok' ? c : { state: 'none' })); }}
+                onDisconnect={disconnect} onSwitch={() => setEditing(true)}
+                onCancelEdit={() => setEditing(false)} />
             </Card>
 
-            {/* Import card */}
-            <Card className="!p-4">
-              <h2 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3 flex items-center gap-2">
-                <Ico name="film" className="text-brand" size={13} />Import Video
-              </h2>
+            <Card className={cls(!connected && 'opacity-60')}>
+              <StepTitle n={2} title={t('step2.title')} />
+              {!connected && <p className="text-xs text-amber-300 mb-3 inline-flex items-center gap-1.5"><Ico name="info" size={12} />{t('site.connect_first')}</p>}
 
-              {/* Tabs */}
               <div className="flex gap-1 mb-3 rounded-lg bg-slate-800/60 p-1 w-fit">
-                {TABS.map(t => (
-                  <button key={t} onClick={() => setTab(t)}
+                {[['link', 'link', t('add.tab_link')], ['files', 'upload', t('add.tab_files')]].map(([key, icon, label]) => (
+                  <button key={key} type="button" onClick={() => setTab(key)}
                     className={cls('inline-flex items-center gap-1.5 rounded-md px-4 py-1.5 text-xs font-semibold transition',
-                      tab === t ? 'bg-brand text-white shadow' : 'text-slate-400 hover:text-slate-200')}>
-                    {t === 'URL' ? <Ico name="link" size={11} /> : <Ico name="upload" size={11} />}{t}
+                      tab === key ? 'bg-brand text-white shadow' : 'text-slate-400 hover:text-slate-200')}>
+                    <Ico name={icon} size={11} />{label}
                   </button>
                 ))}
               </div>
 
-              <div className="space-y-2.5">
-                {tab === 'URL' ? (
-                  <Input label="Video URL" type="url" value={videoUrl} onChange={setVideoUrl} placeholder="https://www.youtube.com/watch?v=…" />
+              <div className="space-y-3">
+                {tab === 'link' ? (
+                  <div className="space-y-2">
+                    <Input label={t('add.link')} type="url" value={videoUrl} onChange={setVideoUrl} placeholder={t('add.link_ph')} onEnter={() => canSubmit && submit()} />
+                    {preview.state === 'loading' && <p className="text-xs text-slate-400 inline-flex items-center gap-1.5"><Ico name="loader" size={12} className="animate-spin" />{t('add.checking')}</p>}
+                    {preview.state === 'error' && <p className={cls('text-xs flex gap-1.5', blockedPreview ? 'text-red-300' : 'text-amber-300')}><Ico name="alert" size={12} className="mt-0.5" />{errText(preview.error)}</p>}
+                    {preview.state === 'ok' && (
+                      <div className="flex gap-3 rounded-lg border border-slate-800 bg-slate-950/60 p-2">
+                        {preview.data.thumbnail
+                          ? <img src={preview.data.thumbnail} alt="" className="w-24 h-14 rounded object-cover shrink-0 bg-slate-800" />
+                          : <span className="w-24 h-14 rounded bg-slate-800 flex items-center justify-center shrink-0"><Ico name="film" size={18} className="text-slate-600" /></span>}
+                        <div className="min-w-0 text-xs">
+                          <p className="text-sm text-slate-100 font-medium line-clamp-2">{preview.data.title}</p>
+                          <p className="text-slate-400 truncate">{[preview.data.uploader, preview.data.duration_s ? fmtDuration(preview.data.duration_s) : '', preview.data.source_site].filter(Boolean).join(' · ')}</p>
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 ) : (
-                  <label className="block">
-                    <span className="text-xs text-slate-400 mb-1 block">Local video file</span>
-                    <div onClick={() => document.getElementById('file-input').click()}
-                      className={cls('flex items-center justify-center gap-3 rounded-lg border-2 border-dashed cursor-pointer py-5 text-sm transition',
-                        localFile ? 'border-emerald-600 text-emerald-400 bg-emerald-950/20' : 'border-slate-700 text-slate-400 hover:border-brand bg-slate-900')}>
-                      {localFile ? (
-                        <><Ico name="film" size={20} className="text-emerald-400 shrink-0" /><div className="min-w-0"><p className="font-medium truncate">{localFile.name}</p><p className="text-xs text-slate-500">{(localFile.size/1048576).toFixed(1)} MiB</p></div></>
-                      ) : (
-                        <><Ico name="folder" size={20} className="text-slate-500 shrink-0" /><span>Click to select a video file</span></>
-                      )}
+                  <div className="space-y-2">
+                    <div onClick={() => fileInput.current && fileInput.current.click()}
+                      className="flex flex-col items-center justify-center gap-1 rounded-lg border-2 border-dashed border-slate-700 hover:border-brand bg-slate-900 cursor-pointer py-5 text-sm text-slate-400 transition">
+                      <Ico name="upload" size={22} className="text-slate-500" />
+                      <span>{files.length ? t('add.drop_more') : t('add.drop')}</span>
                     </div>
-                    <input id="file-input" type="file" accept="video/*,.mkv,.avi,.mov,.flv,.webm,.mp4" className="hidden"
-                      onChange={e => { const f = e.target.files?.[0]; if (f) { setLocalFile(f); if (!vidTitle) setVidTitle(f.name.replace(/\.[^.]+$/,'')); } }} />
-                  </label>
+                    <input ref={fileInput} type="file" multiple className="hidden"
+                      accept="video/*,.mkv,.avi,.mov,.flv,.webm,.mp4,.m4v,.wmv,.mpg,.mpeg,.ts,.mts,.m2ts,.3gp,.ogv,.vob"
+                      onChange={e => { addFiles(Array.from(e.target.files || [])); e.target.value = ''; }} />
+                    {files.map((f, i) => (
+                      <div key={f.name + f.size} className="flex items-center gap-2 rounded-lg bg-slate-900 border border-slate-800 px-2 py-1.5 text-xs">
+                        <Ico name="film" size={14} className="text-emerald-400" />
+                        <span className="flex-1 truncate text-slate-200">{f.name}</span>
+                        <span className="text-slate-500">{fmtSize(f.size)}</span>
+                        <button type="button" title={t('add.remove_file')} onClick={() => setFiles(prev => prev.filter((_, j) => j !== i))}
+                          className="p-0.5 text-slate-500 hover:text-red-400"><Ico name="x" size={12} /></button>
+                      </div>
+                    ))}
+                  </div>
                 )}
 
-                <Input label="Title (optional)" value={vidTitle} onChange={setVidTitle} placeholder="Auto-detected" />
+                {tab === 'files' && files.length > 1
+                  ? <p className="text-xs text-slate-400">{t('add.title_multi')}</p>
+                  : <Input label={t('add.title')} value={title} onChange={setTitle}
+                      placeholder={tab === 'link' && preview.state === 'ok' ? preview.data.title : t('add.title_auto')} />}
 
-                <div className="grid grid-cols-2 gap-2">
-                  <Select label="Category" value={catId} onChange={setCatId}
-                    options={catsLoaded ? catOptions : [{ value: '0', label: connOk ? 'Loading…' : '— connect first —' }]} />
-                  <Select label="Format" value={format} onChange={setFormat}
-                    options={[{ value:'auto',label:'Auto'},{ value:'mp4',label:'MP4'},{ value:'hls',label:'HLS'}]} />
-                </div>
+                <Select label={t('add.category')} value={catId} options={catOptions}
+                  onChange={v => connected && setCatBySite(prev => ({ ...prev, [conn.key]: v }))} />
 
                 <label className="block">
-                  <span className="text-xs text-slate-400 mb-1 block">Description (optional)</span>
-                  <textarea value={vidDesc} onChange={e => setVidDesc(e.target.value)} placeholder="Optional description…" rows={2}
+                  <span className="text-xs text-slate-400 mb-1 block">{t('add.description')}</span>
+                  <textarea value={desc} onChange={e => setDesc(e.target.value)} placeholder={t('add.description_ph')} rows={2}
                     className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-brand focus:ring-1 focus:ring-brand transition resize-none" />
                 </label>
 
-                {/* Resolutions */}
                 <div>
-                  <div className="flex items-baseline gap-2 mb-1.5">
-                    <span className="text-xs text-slate-400">Resolutions</span>
-                    {resolutions.length === 0
-                      ? <span className="text-xs text-slate-500">all</span>
-                      : <span className="text-xs text-brand font-semibold">{resolutions.map(r => r >= 2160 ? '4K' : r+'p').join(', ')}</span>
-                    }
-                  </div>
-                  <div className="flex flex-wrap gap-1.5">
-                    {[240,360,480,540,720,1080,1440,2160].map(r => (
-                      <label key={r} className={cls(
-                        'flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-semibold cursor-pointer border transition select-none',
-                        resolutions.includes(r)
-                          ? 'bg-brand/20 border-brand text-brand'
-                          : 'bg-slate-800 border-slate-700 text-slate-400 hover:border-slate-500'
-                      )}>
-                        <input type="checkbox" className="hidden" checked={resolutions.includes(r)} onChange={() => toggleResolution(r)} />
-                        {r >= 2160 ? '4K' : r+'p'}
-                      </label>
-                    ))}
-                  </div>
+                  <button type="button" onClick={() => setShowAdvanced(!showAdvanced)} className="text-xs text-slate-400 hover:text-slate-200 inline-flex items-center gap-1">
+                    <Ico name={showAdvanced ? 'chevdown' : 'chevright'} size={12} />{t('add.advanced')}
+                  </button>
+                  {showAdvanced && (
+                    <div className="mt-2 space-y-3 rounded-lg border border-slate-800 bg-slate-950/40 p-3">
+                      <div>
+                        <span className="text-xs text-slate-400 mb-1 block">{t('add.format')}</span>
+                        <div className="flex flex-wrap gap-1.5">
+                          {[['auto', t('add.format_auto')], ['hls', t('add.format_hls')], ['mp4', t('add.format_mp4')]].map(([v, label]) => {
+                            const off = v === 'hls' && connected && site.hls === false;
+                            return (
+                              <button key={v} type="button" disabled={off} onClick={() => setFormat(v)}
+                                className={cls('rounded-full px-3 py-1 text-xs font-semibold border transition disabled:opacity-40 disabled:cursor-not-allowed',
+                                  format === v && !off ? 'bg-brand/20 border-brand text-brand' : 'bg-slate-800 border-slate-700 text-slate-400 hover:border-slate-500')}>
+                                {label}
+                              </button>
+                            );
+                          })}
+                        </div>
+                        {connected && site.hls === false && <p className="text-xs text-slate-500 mt-1">{t('add.format_hls_off')}</p>}
+                      </div>
+                      <div>
+                        <span className="text-xs text-slate-400 mb-1 block">{t('add.quality')}</span>
+                        <div className="flex flex-wrap gap-1.5">
+                          <button type="button" onClick={() => setQualities([])}
+                            className={cls('rounded-full px-2.5 py-0.5 text-xs font-semibold border transition',
+                              !qualities.length ? 'bg-brand/20 border-brand text-brand' : 'bg-slate-800 border-slate-700 text-slate-400 hover:border-slate-500')}>
+                            {t('add.title_auto')}
+                          </button>
+                          {(siteRes.length ? siteRes : [240, 360, 480, 540, 720, 1080, 1440, 2160]).map(r => (
+                            <button key={r} type="button"
+                              onClick={() => setQualities(qualities.includes(r) ? qualities.filter(x => x !== r) : [...qualities, r].sort((a, b) => a - b))}
+                              className={cls('rounded-full px-2.5 py-0.5 text-xs font-semibold border transition',
+                                qualities.includes(r) ? 'bg-brand/20 border-brand text-brand' : 'bg-slate-800 border-slate-700 text-slate-400 hover:border-slate-500')}>
+                              {resLabel(r)}
+                            </button>
+                          ))}
+                        </div>
+                        <p className="text-xs text-slate-500 mt-1">{qualities.length ? t('add.quality_hint') : t('add.quality_auto')}</p>
+                      </div>
+                      <div>
+                        <label className="flex items-start gap-2 text-xs text-slate-300 cursor-pointer select-none">
+                          <input type="checkbox" checked={!!useGpu} onChange={e => setUseGpu(e.target.checked)} className="accent-brand mt-0.5" />
+                          <span>{t('add.gpu')}
+                            <span className="block text-slate-500">
+                              {!gpu || gpu.status !== 'done' ? t('add.gpu_detecting')
+                                : gpu.hardware ? t('add.gpu_found', { name: codecName(gpu.key, gpu.label) }) : t('add.gpu_none')}
+                            </span>
+                          </span>
+                        </label>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
-                {!connOk && (
-                  <p className="inline-flex items-center gap-1.5 text-xs text-amber-400">
-                    <Ico name="alert" className="text-amber-400" size={12} />Test connection before importing.
-                  </p>
-                )}
-
-                <Btn variant="success" onClick={startImport} disabled={!canImport}>
-                  <span className="inline-flex items-center gap-1.5"><Ico name="plus" />Add to Queue</span>
+                <Btn variant="success" size="md" className="w-full" onClick={submit} disabled={!canSubmit}>
+                  <Ico name="plus" />{tab === 'files' && files.length > 1 ? t('add.submit_n', { n: files.length }) : t('add.submit')}
                 </Btn>
               </div>
             </Card>
-
           </div>
         </aside>
 
-        {/* RIGHT: job queue */}
+        {/* RIGHT: queue */}
         <main className="flex-1 flex flex-col overflow-hidden">
-          <div className="shrink-0 px-6 pt-5 pb-3 flex items-center gap-2 border-b border-slate-800">
+          <div className="shrink-0 px-6 pt-4 pb-3 flex items-center gap-2 border-b border-slate-800">
             <Ico name="list" className="text-brand" size={14} />
-            <h2 className="text-sm font-semibold text-slate-300">Queue</h2>
-            {jobQueue.length > 0 && (
-              <span className="ml-1 rounded-full bg-slate-800 border border-slate-700 px-2 py-0.5 text-xs text-slate-400">{jobQueue.length}</span>
+            <h2 className="text-sm font-semibold text-slate-300">{t('queue.title')}</h2>
+            {jobs.length + transfers.length > 0 && (
+              <span className="ml-1 rounded-full bg-slate-800 border border-slate-700 px-2 py-0.5 text-xs text-slate-400">{jobs.length + transfers.length}</span>
             )}
+            <div className="flex-1" />
+            {doneCount > 0 && <Btn variant="link" size="sm" onClick={clearDone}><Ico name="trash" size={12} />{t('queue.clear_done')}</Btn>}
           </div>
 
           <div className="flex-1 overflow-y-auto log-scroll px-6 py-4">
-            {jobQueue.length === 0 ? (
+            {jobs.length === 0 && transfers.length === 0 ? (
               <div className="flex flex-col items-center justify-center h-full gap-3 text-slate-600 select-none">
                 <Ico name="film" size={40} className="opacity-30" />
-                <p className="text-sm">No jobs yet — add a URL or file on the left.</p>
+                <p className="text-sm">{t('queue.empty')}</p>
               </div>
             ) : (
               <div className="space-y-3">
-                {jobQueue.map((job, idx) => {
-                  const pct = job.pct || { download: 0, encode: 0, upload: 0 };
-                  const statusIcon =
-                    job.status === 'pending' ? <span className="text-slate-500 text-xs font-bold">#{idx+1}</span>
-                    : job.status === 'running' ? <Ico name="loader" size={14} className="text-amber-400 animate-spin" />
-                    : job.status === 'done'    ? <Ico name="check" size={14} className="text-emerald-400" />
-                    : <Ico name="xcircle" size={14} className="text-red-400" />;
-                  const statusColor = job.status === 'done' ? 'text-emerald-400'
-                    : job.status === 'error' ? 'text-red-400'
-                    : job.status === 'running' ? 'text-amber-400'
-                    : 'text-slate-500';
-                  return (
-                    <div key={job.job_id} className="rounded-lg border border-slate-700 bg-slate-800/40 p-3 space-y-2">
-                      {/* Header row */}
-                      <div className="flex items-start gap-2">
-                        <span className="mt-0.5 shrink-0 w-5 flex justify-center">{statusIcon}</span>
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm font-medium text-slate-100 truncate">{job.title || job.job_id}</p>
-                          <span className={cls('text-xs capitalize', statusColor)}>{job.status}</span>
-                        </div>
-                        {job.thumbnail && (
-                          <img src={job.thumbnail} alt="" className="w-16 h-11 rounded object-cover shrink-0 bg-slate-700" />
-                        )}
-                      </div>
-
-                      {job.videoInfo && (job.status === 'running' || job.status === 'done') && (
-                        <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-slate-400 pl-7">
-                          {job.videoInfo.uploader && <span className="inline-flex items-center gap-1"><Ico name="tv" size={11} />{job.videoInfo.uploader}</span>}
-                          {job.videoInfo.duration_s > 0 && (
-                            <span className="inline-flex items-center gap-1"><Ico name="timer" size={11} />{Math.floor(job.videoInfo.duration_s/3600) > 0 ? `${Math.floor(job.videoInfo.duration_s/3600)}h ` : ''}{Math.floor((job.videoInfo.duration_s%3600)/60)}m {job.videoInfo.duration_s%60}s</span>
-                          )}
-                          {job.videoInfo.file_size_bytes > 0 && (
-                            <span className="inline-flex items-center gap-1"><Ico name="hdd" size={11} />{job.videoInfo.file_size_bytes >= 1_073_741_824
-                              ? (job.videoInfo.file_size_bytes/1_073_741_824).toFixed(2)+' GiB'
-                              : (job.videoInfo.file_size_bytes/1_048_576).toFixed(1)+' MiB'}</span>
-                          )}
-                        </div>
-                      )}
-
-                      {/* Progress bars (running only) */}
-                      {job.status === 'running' && (
-                        <div className="space-y-1.5 pl-7">
-                          <StepRow label="Download" pct={pct.download} color="bg-brand" />
-                          <StepRow label="Encode"   pct={pct.encode}   color="bg-amber-500" />
-                          <StepRow label="Upload"   pct={pct.upload}   color="bg-emerald-500" />
-                        </div>
-                      )}
-
-                      {/* Log (running) */}
-                      {job.status === 'running' && job.logs && job.logs.length > 0 && (
-                        <LogScroll logs={job.logs} />
-                      )}
-
-                      {/* Done banner */}
-                      {job.status === 'done' && job.doneInfo && (
-                        <div className="pl-7 text-xs text-emerald-400 inline-flex items-center gap-1.5">
-                          <Ico name="check" size={12} />videos_id: <strong>{job.doneInfo.videos_id}</strong>{' '}
-                          <a href={job.doneInfo.url} target="_blank" rel="noreferrer"
-                             className="inline-flex items-center gap-1 underline hover:text-emerald-300">
-                            View <Ico name="extlink" size={11} />
-                          </a>
-                        </div>
-                      )}
-
-                      {/* Error banner */}
-                      {job.status === 'error' && job.jobError && (
-                        <div className="pl-7 text-xs text-red-400 inline-flex items-center gap-1.5">
-                          <Ico name="xcircle" size={12} />{job.jobError}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
+                {jobs.map(job => (
+                  <JobCard key={job.job_id} job={job} onAction={jobAction}
+                    expanded={!!expanded[job.job_id]}
+                    onToggle={() => setExpanded(prev => ({ ...prev, [job.job_id]: !prev[job.job_id] }))} />
+                ))}
+                {transfers.map(tr => <TransferCard key={tr.id} tr={tr} />)}
               </div>
             )}
           </div>
         </main>
-
       </div>
+
+      {toast && (
+        <div className="fixed bottom-5 left-1/2 -translate-x-1/2 z-40 max-w-lg rounded-lg bg-slate-800 border border-slate-700 px-4 py-2.5 text-sm text-slate-100 shadow-xl">
+          {toast}
+        </div>
+      )}
     </div>
   );
 }

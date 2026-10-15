@@ -50,7 +50,10 @@ Pipeline: download/receive → probe → encode → thumbnails → login → reg
 upload → finalize → images → notify done. Settings: `.env`/env (`config.py`); web UI connection
 session id in browser `localStorage` (never the password). Logs, history and the work folder:
 `~/.local/share/local-encoder/` (`LOCAL_ENCODER_WORK_DIR` overrides the work folder). The web UI
-listens on `127.0.0.1:47800` (another free port if busy).
+listens on `127.0.0.1:47800` (another free port if busy; a second start just reopens the page).
+`serve` runs in the tray icon (`tray.py`; no console window on Windows) and keeps the computer
+awake while videos are processed (`keep_awake.py`). The page is in English, Portuguese and
+Spanish (`static/i18n.js`).
 
 Distribution: one-file PyInstaller executables for Windows, macOS (arm64 + Intel) and Linux
 (x64 + arm64), with a static GPL FFmpeg and deno (yt-dlp's JavaScript runtime for YouTube),

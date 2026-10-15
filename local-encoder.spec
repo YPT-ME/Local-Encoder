@@ -52,6 +52,14 @@ a = Analysis(
         "yt_dlp.extractor",
         "yt_dlp.downloader",
         "yt_dlp.postprocessor",
+        # Tray icon (local_encoder/tray.py): pystray picks its backend at import time
+        "pystray._win32",
+        "pystray._darwin",
+        "pystray._xorg",
+        "pystray._appindicator",
+        "pystray._gtk",
+        "PIL.Image",
+        "PIL.ImageDraw",
     ],
     hookspath=[],
     hooksconfig={},
@@ -62,6 +70,12 @@ a = Analysis(
     cipher=block_cipher,
     noarchive=False,
 )
+
+# Windows: no black console window; the app lives in its tray icon (local_encoder/tray.py) and
+# main.py attaches to the calling console for command-line use. macOS and Linux keep a console:
+# the macOS build is a bare executable that Finder opens through Terminal, and the Linux build is
+# started from a terminal, so there the window is expected and shows the address and errors.
+USE_CONSOLE = sys.platform != "win32"
 
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 
@@ -79,7 +93,7 @@ exe = EXE(
     upx=True,
     upx_exclude=[],
     runtime_tmpdir=None,
-    console=True,
+    console=USE_CONSOLE,
     disable_windowed_traceback=False,
     target_arch=None,
     codesign_identity=None,

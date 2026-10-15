@@ -17,13 +17,19 @@ from typing import Annotated
 
 import typer
 
-from local_encoder import __version__
+from local_encoder import __version__, keep_awake
 from local_encoder import history as _history
-from local_encoder.avideo_client import AVideoAPIError, AVideoClient
+from local_encoder.avideo_client import AVideoClient
 from local_encoder.config import load_config
-from local_encoder.downloader import download_video, get_video_info
+from local_encoder.downloader import (
+    download_video,
+    get_video_info,
+    is_web_url,
+    reject_unsupported,
+)
 from local_encoder.encoder import (
     ALLOWED_RESOLUTIONS,
+    detect_video_codec,
     encode_hls,
     encode_mp4_multi,
     extract_mp3,
@@ -32,7 +38,9 @@ from local_encoder.encoder import (
     extract_thumbnail_webp,
     nearest_resolution,
     output_resolution,
+    probe_media,
 )
+from local_encoder.errors import LocalEncoderError, classify
 from local_encoder.logging_setup import configure_logging
 from local_encoder.progress import ProgressReporter, console
 from local_encoder.utils import probe_duration, sanitize_filename
@@ -94,9 +102,9 @@ def import_video(
             "--format",
             "-f",
             help=(
-                "Output format: 'auto' (use server config), 'mp4' (multi-resolution MP4), "
-                "or 'hls' (multi-resolution HLS ZIP with AES-128 encryption). "
-                "Default: 'auto'."
+                "Output format: 'auto' (what the site supports), 'mp4' (multi-resolution MP4), "
+                "or 'hls' (multi-resolution HLS ZIP with AES-128 encryption; only when the "
+                "site has VideoHLS). Default: 'auto'."
             ),
         ),
     ] = "auto",
@@ -112,6 +120,13 @@ def import_video(
             ),
         ),
     ] = 0,
+    gpu: Annotated[
+        bool,
+        typer.Option(
+            "--gpu/--no-gpu",
+            help="Use the graphics card when it can convert the video (faster). Default: on.",
+        ),
+    ] = True,
     # Metadata
     title: Annotated[
         str | None,
@@ -189,6 +204,15 @@ def import_video(
         console.print(f"[red]Configuration error:[/red] {exc}")
         raise typer.Exit(1) from exc
 
+    if not is_web_url(video_url):
+        console.print(f"[red]{classify(LocalEncoderError('invalid_url')).message}[/red]")
+        raise typer.Exit(1)
+
+    fmt = format.lower()
+    if fmt not in ("auto", "mp4", "hls"):
+        console.print(f"[red]Unknown format '{format}'; use 'auto', 'mp4', or 'hls'.[/red]")
+        raise typer.Exit(1)
+
     # Snap to the nearest supported resolution (only used for single-res fallback)
     actual_resolution = nearest_resolution(resolution) if resolution > 0 else 0
     if resolution > 0 and actual_resolution != resolution:
@@ -205,7 +229,7 @@ def import_video(
 
     hist_entry = _history.new_entry(video_url, cfg.server_url, cfg.username)
 
-    with ProgressReporter(verbose=debug) as rpt:
+    with ProgressReporter(verbose=debug) as rpt, keep_awake.inhibit():
         files_to_clean: list[Path] = []
         succeeded = False
 
@@ -219,6 +243,7 @@ def import_video(
             except Exception as exc:
                 rpt.warning(f"Could not fetch metadata ({exc}); continuing anyway.")
                 info = {}
+            reject_unsupported(info)
 
             video_title = title or sanitize_filename(info.get("title") or "video")
             video_description = description or info.get("description") or ""
@@ -243,37 +268,42 @@ def import_video(
             files_to_clean.append(raw_file)
             rpt.success(f"Downloaded → {raw_file.name}")
 
+            media = probe_media(raw_file, cfg.ffprobe_bin)
+            if not media.has_video:
+                raise LocalEncoderError("audio_only" if media.has_audio else "unreadable_file")
+
             # Probe actual duration from the downloaded file
             duration = probe_duration(raw_file, cfg.ffprobe_bin) or meta_duration
             if duration == 0:
                 rpt.warning("Could not determine video duration; using 0.")
 
-            # Thumbnail seek point: 25 % into the video, capped at 600 s
-            seek = min(duration * 0.25, 600.0) if duration > 0 else 5.0
+            # Thumbnail seek point: middle of the video, capped at 600 s (Encoder.php)
+            seek = min(duration / 2, 600.0) if duration > 0 else 5.0
 
             # ----------------------------------------------------------
-            # Step 2b – Fetch server config (determines format + resolution cap)
+            # Step 2b – Log in and read what the site accepts. The login
+            # tells whether the site plays HLS (VideoHLS) and which
+            # resolutions this user may receive.
             # ----------------------------------------------------------
-            rpt.info(f"Fetching server config from {cfg.server_url}…")
-            with AVideoClient(cfg.server_url, ssl_verify=cfg.ssl_verify) as _cfg_client:
-                server_cfg = _cfg_client.get_server_config()
+            rpt.info(f"Logging in to {cfg.server_url} as {cfg.username}…")
+            with AVideoClient(cfg.server_url, ssl_verify=cfg.ssl_verify) as _login_client:
+                login_result = _login_client.login(cfg.username, cfg.password)
+                server_cfg = _login_client.get_server_config()
+            rpt.success(f"Logged in as {login_result.name or login_result.username}")
+            hls_available = login_result.video_hls and not server_cfg.disable_hls
             rpt.info(
-                f"Server config: auto_mp3={server_cfg.auto_convert_to_mp3}, "
-                f"single_res={server_cfg.single_resolution}, "
-                f"disable_hls={server_cfg.disable_hls}, disable_mp4={server_cfg.disable_mp4}"
+                f"Site: hls={hls_available}, auto_mp3={server_cfg.auto_convert_to_mp3}, "
+                f"single_res={server_cfg.single_resolution}"
             )
 
             # ----------------------------------------------------------
             # Step 3 – Encode
             # ----------------------------------------------------------
-            fmt = format.lower()
-            if fmt not in ("auto", "mp4", "hls"):
-                console.print(f"[red]Unknown format '{format}'; use 'auto', 'mp4', or 'hls'.[/red]")
-                raise typer.Exit(1)
-
-            # Resolve 'auto' format using server config
-            if fmt == "auto":
-                fmt = "hls" if not server_cfg.disable_hls else "mp4"
+            if fmt == "hls" and not hls_available:
+                rpt.warning("This site does not play HLS (VideoHLS is off); sending MP4 instead.")
+                fmt = "mp4"
+            elif fmt == "auto":
+                fmt = "hls" if hls_available else "mp4"
                 rpt.info(f"Auto format resolved to: {fmt}")
 
             # Resolve resolution cap: explicit flag > server singleResolution > all
@@ -286,10 +316,22 @@ def import_video(
                 res_cap = max(ALLOWED_RESOLUTIONS)
 
             target_resolutions = [r for r in ALLOWED_RESOLUTIONS if r <= res_cap]
+            allowed = login_result.allowed_resolutions
+            if allowed:
+                # Like Format.php getFinalResolutions: no overlap keeps the list
+                target_resolutions = [r for r in target_resolutions if r in allowed] or (
+                    target_resolutions
+                )
             if not target_resolutions:
                 target_resolutions = [ALLOWED_RESOLUTIONS[0]]
 
-            encoded_files: list[Path] = []  # list of (path, ext, resolution) tuples
+            codec = detect_video_codec(cfg.ffmpeg_bin, prefer_hardware=gpu)
+            rpt.info(f"Converting with: {codec.label}")
+
+            def on_notice(code: str) -> None:
+                rpt.warning("The graphics card could not convert this video; using the processor.")
+
+            encoded_files: list[Path] = []
             encoded_duration = duration
 
             if fmt == "mp4":
@@ -304,6 +346,8 @@ def import_video(
                     ffmpeg_bin=cfg.ffmpeg_bin,
                     ffprobe_bin=cfg.ffprobe_bin,
                     progress_callback=rpt.on_encode,
+                    codec=codec,
+                    notice_callback=on_notice,
                 )
                 files_to_clean.extend(mp4_files)
                 encoded_files.extend(mp4_files)
@@ -316,10 +360,7 @@ def import_video(
                 )
 
             else:  # hls
-                rpt.begin_encode(
-                    f"Encoding HLS (up to {res_cap}p)",
-                    int(duration * len(target_resolutions)) or 100,
-                )
+                rpt.begin_encode(f"Encoding HLS (up to {res_cap}p)", int(duration) or 100)
                 hls_zip = encode_hls(
                     input_path=raw_file,
                     output_dir=work_dir,
@@ -327,6 +368,8 @@ def import_video(
                     ffmpeg_bin=cfg.ffmpeg_bin,
                     ffprobe_bin=cfg.ffprobe_bin,
                     progress_callback=rpt.on_encode,
+                    codec=codec,
+                    notice_callback=on_notice,
                 )
                 files_to_clean.append(hls_zip)
                 encoded_files = [hls_zip]
@@ -360,15 +403,10 @@ def import_video(
                     rpt.warning(f"  Thumbnail {label} skipped: {exc}")
 
             # ----------------------------------------------------------
-            # Step 5 – Upload to AVideo
+            # Step 5 – Upload to AVideo (reusing the login token)
             # ----------------------------------------------------------
             with AVideoClient(cfg.server_url, ssl_verify=cfg.ssl_verify) as client:
-                # 5a. Login
-                rpt.info(f"Logging in to {cfg.server_url} as {cfg.username}…")
-                login_result = client.login(cfg.username, cfg.password)
-                rpt.success(f"Logged in as {login_result.name or login_result.username}")
-
-                # fmt and server_cfg already resolved before Step 3
+                client.use_login(login_result)
                 resolved_fmt = fmt
 
                 # 5b. Register video record  (use highest resolution for registration)
@@ -486,12 +524,6 @@ def import_video(
                 _history.update_entry(hist_entry)
                 succeeded = True
 
-        except AVideoAPIError as exc:
-            hist_entry.status = "failed"
-            hist_entry.error = str(exc)
-            _history.update_entry(hist_entry)
-            rpt.error(f"AVideo API error: {exc}")
-            raise typer.Exit(1) from exc
         except KeyboardInterrupt:
             hist_entry.status = "failed"
             hist_entry.error = "Interrupted"
@@ -499,10 +531,14 @@ def import_video(
             rpt.warning("Interrupted by user.")
             raise typer.Exit(130) from None
         except Exception as exc:
+            # One plain-language message with the next step; the details are in the log.
+            problem = classify(exc)
+            logging.getLogger(__name__).exception("Import failed")
             hist_entry.status = "failed"
-            hist_entry.error = str(exc)
+            hist_entry.error = problem.message
             _history.update_entry(hist_entry)
-            rpt.error(f"Unexpected error: {exc}")
+            rpt.error(problem.message)
+            rpt.info(f"Details: {log_file}")
             if debug:
                 import traceback
 
@@ -603,29 +639,132 @@ def _pick_port(host: str, port: int) -> int:
     raise OSError(f"No free port available on {host}")
 
 
+def _local_url(host: str, port: int) -> str:
+    """Address the browser on this computer uses to reach a server bound to *host*."""
+    browse_host = "127.0.0.1" if host in ("", "0.0.0.0", "::") else host
+    if ":" in browse_host:
+        browse_host = f"[{browse_host}]"
+    return f"http://{browse_host}:{port}"
+
+
+def _running_instance_url(host: str, port: int) -> str | None:
+    """Return the address of a Local Encoder already answering on *port*, if any."""
+    import httpx
+
+    url = _local_url(host, port)
+    try:
+        # The packaged app may check GitHub for updates (up to 5 s) before answering.
+        response = httpx.get(
+            f"{url}/api/version", timeout=httpx.Timeout(10.0, connect=2.0), trust_env=False
+        )
+        data = response.json()
+    except (httpx.HTTPError, ValueError):
+        return None
+    if response.status_code == 200 and isinstance(data, dict) and "version" in data:
+        return url
+    return None
+
+
 @app.command("serve")
 def serve(
     host: str = typer.Option("127.0.0.1", help="Bind host"),
     port: int = typer.Option(DEFAULT_PORT, help="Bind port (another free port is used if busy)"),
     no_browser: bool = typer.Option(False, "--no-browser", help="Do not open a browser tab"),
+    no_tray: bool = typer.Option(
+        False, "--no-tray", help="Do not show the icon near the clock; stop with Ctrl+C"
+    ),
 ) -> None:
     """Start the web UI (FastAPI + uvicorn)."""
+    import signal
+    import threading
     import webbrowser
-
-    import uvicorn
-
-    from local_encoder.server import app as fastapi_app
 
     actual_port = _pick_port(host, port)
     if actual_port != port:
+        existing = _running_instance_url(host, port)
+        if existing:
+            console.print(f"Local Encoder is already running at {existing}")
+            if not no_browser:
+                webbrowser.open(existing)
+            raise typer.Exit(0)
         console.print(f"[yellow]Port {port} is busy; using {actual_port} instead.[/yellow]")
-    url = f"http://{host}:{actual_port}"
+
+    import uvicorn
+
+    from local_encoder import tray
+    from local_encoder.server import app as fastapi_app
+
+    url = _local_url(host, actual_port)
+    uv_server = uvicorn.Server(
+        uvicorn.Config(
+            fastapi_app,
+            host=host,
+            port=actual_port,
+            log_level="warning",
+            # Open progress streams (SSE) would otherwise keep Quit waiting forever.
+            timeout_graceful_shutdown=5,
+        )
+    )
+    pystray = None if no_tray else tray.load_pystray()
+
+    if pystray is None:
+        console.print(f"[bold green]Local Encoder {__version__} is running at {url}[/bold green]")
+        console.print("Keep this window open while you use it. Close it to stop Local Encoder.")
+        if not no_browser:
+            threading.Thread(
+                target=tray.open_browser_when_ready, args=(uv_server, url), daemon=True
+            ).start()
+        uv_server.run()
+        return
+
+    thread = threading.Thread(target=uv_server.run, name="web-server", daemon=True)
+    thread.start()
+    if not tray.wait_until_started(uv_server, thread, timeout=30.0) and not thread.is_alive():
+        logging.getLogger(__name__).error("The web server did not start on %s", url)
+        console.print(f"[red]Local Encoder could not start on {url}.[/red]")
+        raise typer.Exit(1)
+
     console.print(f"[bold green]Local Encoder {__version__} is running at {url}[/bold green]")
-    console.print("Keep this window open while you use it. Close it to stop Local Encoder.")
+    console.print(
+        "Local Encoder now lives in its icon near the clock (it may be hidden under the "
+        "arrow). Use that icon to open the page or to quit."
+    )
+    if sys.platform != "win32":
+        console.print("You can also press Ctrl+C here to stop it.")
     if not no_browser:
-        # Open after a short delay so the server is ready
-        import threading
+        webbrowser.open(url)
 
-        threading.Timer(1.0, lambda: webbrowser.open(url)).start()
+    active_jobs, set_notifier = tray.server_hooks()
 
-    uvicorn.run(fastapi_app, host=host, port=actual_port, log_level="warning")
+    def stop_server() -> None:
+        uv_server.should_exit = True
+
+    tray_app = tray.TrayApp(
+        pystray,
+        open_page=lambda: webbrowser.open(url),
+        on_quit=stop_server,
+        active_jobs=active_jobs,
+    )
+    previous_sigint = None
+    try:
+        # The tray loop owns the main thread, so let Ctrl+C end the process directly.
+        previous_sigint = signal.signal(signal.SIGINT, signal.SIG_DFL)
+    except (ValueError, OSError):
+        pass
+    set_notifier(tray_app.notify)
+    try:
+        shown = tray_app.run()
+    finally:
+        set_notifier(None)
+        if previous_sigint is not None:
+            signal.signal(signal.SIGINT, previous_sigint)
+
+    if not shown:
+        console.print("Keep this window open while you use it. Close it to stop Local Encoder.")
+        try:
+            while thread.is_alive():
+                thread.join(0.5)
+        except KeyboardInterrupt:
+            pass
+    stop_server()
+    thread.join(15)

@@ -57,8 +57,13 @@ keep the app usable by that person without reading documentation.
 - The page must fit the existing two-column viewport layout and remain usable on a laptop screen;
   keep labels short and in plain words. Prefer "Video quality" over "Resolution", "Streaming (HLS)"
   over "HLS" in labels, keeping technical terms only as secondary hints.
-- All user-visible strings should be easy to find and translate later (keep them as literals in
-  JSX/CLI help, not built from fragments).
+- Every user-visible string of the page lives in `static/i18n.js` in **English, Portuguese and
+  Spanish** (`t('key', {param})`); never hard-code text in `index.html`. Server messages reach the
+  page as codes (`err.<code>` from `errors.py`, `notice.<code>`), not as English sentences; the
+  technical log stays English and is shown only under “Details”.
+- The page is a guided flow: step 1 connects (saved sites, never the password), step 2 adds
+  videos; advanced options stay collapsed. Each job offers the next action (Try again, Connect
+  again, Open folder, Report a problem) instead of only an error text.
 
 ## CLI (`local_encoder/cli.py`)
 

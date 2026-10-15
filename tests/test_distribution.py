@@ -166,7 +166,7 @@ def test_check_for_update_is_quiet_when_offline() -> None:
 
 def test_version_endpoint_skips_github_when_running_from_source() -> None:
     with patch("local_encoder.updates.check_for_update") as check:
-        data = TestClient(server.app).get("/api/version").json()
+        data = TestClient(server.app, base_url="http://127.0.0.1").get("/api/version").json()
     check.assert_not_called()
     assert data["version"] == server.__version__
     assert data["update_available"] is False
@@ -179,7 +179,7 @@ def test_version_endpoint_announces_update_in_packaged_app(
     monkeypatch.setattr(updates, "is_frozen", lambda: True)
     info = updates.UpdateInfo(current="0.1.0", latest="9.9.9", update_available=True)
     with patch("local_encoder.updates.check_for_update", return_value=info):
-        data = TestClient(server.app).get("/api/version").json()
+        data = TestClient(server.app, base_url="http://127.0.0.1").get("/api/version").json()
     assert data["update_available"] is True
     assert data["latest"] == "9.9.9"
     assert data["download_url"].endswith("/releases/latest")

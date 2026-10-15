@@ -29,8 +29,13 @@ without running it.
   - FFmpeg/FFprobe: patch `subprocess.run` / `subprocess.Popen` in the module under test and
     assert the **argument list** (this is how the command contract with the PHP Encoder is kept).
   - yt-dlp: patch `local_encoder.downloader.yt_dlp.YoutubeDL` as in `tests/test_downloader.py`.
-  - FastAPI: `fastapi.testclient.TestClient(app)`; isolate global job state with
-    `monkeypatch.setattr("local_encoder.server._jobs", {...})` and `_job_order`.
+  - FastAPI: `TestClient(app, base_url="http://127.0.0.1:47800", headers={"X-Local-Encoder": "1"})`
+    (the default `testserver` host and requests without the header get 403). Isolate global
+    state like the `_isolated_state` fixture in `tests/test_server.py` (`_jobs`, `_job_order`,
+    `_subscribers`, a fresh `_work_queue` no worker reads, `OUTPUT_DIR`).
+  - Web UI: `tests/test_errors.py` checks that every error code has an `err.<code>` text in the
+    three languages of `static/i18n.js`. To catch JSX syntax errors without a browser, compile the
+    page with the vendored `babel.min.js` in Node.
 - Use `tmp_path` for every file the test writes. Never write into the repository or the real
   `~/.local/share/local-encoder/`. `tests/conftest.py` already redirects the log file and the
   history to a temp folder; tests that start jobs must patch `server.OUTPUT_DIR` (the

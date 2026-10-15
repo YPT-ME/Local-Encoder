@@ -18,45 +18,23 @@ paths without a prefix are in this repository. Line numbers drift — re-check b
 
 ## Known Defects
 
-### Open (found in the 2026-10-15 audit)
+### Found in the 2026-10-15 audit — status
 
-1. 🐞 **The web UI does not use the bundled FFmpeg.**
-   - `server.py:518-522` and `server.py:641-645` build `Config(...)` directly. Its defaults are the
-     bare names `ffmpeg`/`ffprobe` (`config.py:44-45`). Only `load_config()` calls
-     `resolve_ffmpeg()`/`resolve_ffprobe()` (`config.py:78-79`).
-   - The releases keep FFmpeg next to the executable (or inside it on macOS), not on PATH
-     (`_frozen.py:6-9`). On a computer without its own FFmpeg, every web UI job fails after the
-     download. `probe_duration` does not catch `FileNotFoundError` (`utils.py:37-59`).
-   - The CLI and the downloader are not affected (`downloader.py:34`). Earlier "verified with the
-     packaged executable" runs passed because the test machine has FFmpeg on PATH.
-2. 🐞 **A link that contains a playlist downloads the whole playlist.**
-   - `downloader.py:83` and `downloader.py:163` set `"no_playlist": True`. yt-dlp's option is
-     `noplaylist` (`yt_dlp/YoutubeDL.py:336`), so the setting is ignored.
-   - For a `watch?v=…&list=…` link, the info and the title come from the playlist, and every
-     entry is downloaded under the same file name.
-   - The PHP Encoder removes `list=` and imports only the single video (`E/objects/functions.php:1781`).
-3. 🐞 **"Auto" sends HLS to sites that cannot play it.**
-   - The site reports `videoHLS` in the login answer only when the VideoHLS plugin is enabled
-     (`S/objects/login.json.php:359-362`). The PHP Encoder hides HLS when it is missing
-     (`E/view/index.php:242-266`).
-   - Local Encoder does not read `videoHLS` (`avideo_client.py:258-267`). Auto picks HLS unless
-     `doNotShowEncoderAutomaticHLS` is set (`server.py:289-290`, `cli.py:275-276`). The site
-     accepts the zip as a normal video (`S/objects/aVideoEncoder.json.php:253-256`), but nothing
-     plays it there.
-   - Not yet reproduced end to end. Needs a site with VideoHLS disabled.
-4. 🐞 **Audio-only sources (MP3, M4A, SoundCloud links…) have no audio path.**
-   - HLS maps `0:v` (`encoder.py:651-652`), so FFmpeg stops on a file without video.
-   - The MP4 path reads "no height" as unknown and requests all 8 resolutions, up to 2160p
-     (`encoder.py:165`).
-   - The PHP Encoder detects audio by extension (`E/objects/Encoder.php:41`) and turns it into a
-     spectrum video (formats 88/89/90; `E/view/upload.php:76-93`).
-5. 🟡 **Unknown source height means upscaling.**
-   - When ffprobe cannot read the height, Local Encoder encodes every resolution up to 2160p
-     (`encoder.py:165`, `encoder.py:537`).
-   - The PHP Encoder assumes 1080 (`E/objects/Format.php:460-497`).
-6. 🟡 **HLS encode progress can go past 100 %** (suspected, not reproduced).
-   - `encoder.py:688-693` counts a rendition as finished when its `index.m3u8` exists. FFmpeg
-     writes those playlists while encoding, and all renditions are encoded in the same pass.
+1. ✅ **The web UI did not use the bundled FFmpeg.** Fixed: `Config` resolves the bundled
+   binaries even when built directly (`config.py:44-47`). Regression test in `tests/test_config.py`.
+2. ✅ **A link that contained a playlist downloaded the whole playlist** (`"no_playlist"` is not a
+   yt-dlp option). Fixed: `noplaylist` (`downloader.py`). Playlist/channel links and live
+   broadcasts are refused with a clear message (`downloader.reject_unsupported`). Verified live:
+   a `watch?v=…&list=…` link now previews the single video.
+3. ✅ **"Auto" sent HLS to sites that cannot play it.** Fixed: the login's `videoHLS`
+   (`LoginResult.video_hls`) decides; without it Auto and an explicit HLS choice send MP4 and the
+   UI says why (`server._plan`, `cli.import_video`). Not yet run end to end on a site with
+   VideoHLS disabled.
+4. 🟡 **Audio-only sources have no audio path.** Now refused before encoding with a clear message
+   (`probe_media`, cover art ignored). The spectrum path (formats 88/89/90) is still missing.
+5. ✅ **Unknown source height meant upscaling to 2160p.** Now 1080 is assumed, like
+   `E/objects/Format.php:460-497`.
+6. ✅ **HLS encode progress went past 100 %.** Progress is now computed per FFmpeg run and capped.
 
 ### Fixed — re-verified in the 2026-10-15 audit
 
@@ -124,7 +102,7 @@ Otherwise it shows Low/SD/HD checkboxes (`E/view/index_shareVideos.php:5-7`,
 
 | PHP Encoder feature | LE | Notes |
 | --- | --- | --- |
-| Auto HLS: AES-128 video, one rendition per audio track, ladder, zip | 🟡 | `encode_hls` matches the arguments, the key layout and the master playlist (`E/objects/HLSProcessor.php:46-225`). Differences: `-r 30` at every resolution, while the Encoder uses 20 fps at 240p (`E/objects/Format.php:550-563`, `HLSProcessor.php:149`); the master `RESOLUTION` width assumes 16:9, while the Encoder uses the source aspect ratio (`encoder.py:715` vs `HLSProcessor.php:269-295`); no `index.mp4`/`index.mp3` in the zip. Audio segments are not encrypted in either. **Defect 3** (sites without VideoHLS). |
+| Auto HLS: AES-128 video, one rendition per audio track, ladder, zip | 🟡 | `encode_hls` matches the arguments, the key layout and the master playlist (`E/objects/HLSProcessor.php:46-225`), including 20 fps at 240p and the source aspect ratio in `RESOLUTION` (fixed 2026-10-15). Still missing: `index.mp4`/`index.mp3` in the zip. Audio segments are not encrypted in either. Sent only when the site has VideoHLS. Deliberate deviations: see “Deviations” below. |
 | Auto MP4 ladder (≤ source, no upscale) | ✅ | `encode_mp4_multi` runs one FFmpeg process with several outputs. Like `MP4Processor`, it adds `-minrate/-maxrate/-bufsize`, which the Encoder's dynamic MP4 (format 31) does not. It lacks the Encoder's `-max_muxing_queue_size 1024` (`E/install/database.sql:187`). **Defect 5.** |
 | `saveOriginalVideoResolution` | ❌ | Read (`avideo_client.py:308`) but not used. The Encoder adds an unscaled output tagged with the nearest bucket, also when the source is smaller than every bucket (`E/objects/Format.php:880-903`). |
 | `singleResolution` | 🟡 | The Encoder makes **one** MP4 at the largest bucket ≤ min(source, value) (`E/objects/MP4Processor.php:6-21`, `Format.php:1112-1114`), on the MP4 path only. Local Encoder uses the value as a cap on the whole ladder, for HLS too (`server.py:301-305`, `cli.py:282-284`). |
@@ -135,9 +113,9 @@ Otherwise it shows Low/SD/HD checkboxes (`E/view/index_shareVideos.php:5-7`,
 | `autoConvertVideosToMP3` | 🟡 | MP4 path only (`server.py:424`, `cli.py:433`). The Encoder also writes `index.mp3` inside the HLS zip (`E/objects/HLSProcessor.php:35-43`). That is the default path, and vlu.me has the flag on. |
 | `autoConvertToMp4` (VideoHLS) | ❌ | Not read. The Encoder puts `index.mp4`, at the nearest bucket ≤ source, in the HLS zip (`E/objects/HLSProcessor.php:25-34`). |
 | Legacy Low/SD/HD MP4/WebM, multi-bitrate HLS (order 9) | ❌ | Low priority. Shown only when `showOnlyEncoderAutomaticResolutions` is off, and these upscale (`E/objects/Format.php:174-215`). |
-| Per-user `allowedResolutions` (login) | ❌ | Not parsed (`avideo_client.py:258-267`). The Encoder intersects it with its own list, falling back to its own list when they do not overlap (`E/objects/Format.php:734-757`). |
-| UI gating by site flags | 🟡 | Only `doNotShowEncoderAutomaticHLS` is used. `doNotShowEncoderAutomaticMP4` is read but unused (`avideo_client.py:310`). The login `videoHLS` is ignored (**defect 3**). |
-| Output validation and retry | ❌ | Local Encoder checks only FFmpeg's exit code. The Encoder decodes the first 10 s of each output (`E/objects/Format.php:1206-1264`). It retries the encode once (`:1143-1144`) and re-runs the job up to 4 times (`E/objects/Encoder.php:1750-1757`). |
+| Per-user `allowedResolutions` (login) | ✅ | Parsed (`LoginResult.allowed_resolutions`) and intersected like `E/objects/Format.php:734-757` (no overlap keeps the list), in the web UI and the CLI. |
+| UI gating by site flags | 🟡 | The login `videoHLS` and `doNotShowEncoderAutomaticHLS` hide HLS; the page shows what the site receives. `doNotShowEncoderAutomaticMP4` is read but unused. |
+| Output validation and retry | 🟡 | Local Encoder checks FFmpeg's exit code; a failed hardware encode is redone once in software. No decode check yet. The Encoder decodes the first 10 s of each output (`E/objects/Format.php:1206-1264`). It retries the encode once (`:1143-1144`) and re-runs the job up to 4 times (`E/objects/Encoder.php:1750-1757`). |
 | Admin-editable FFmpeg command per format | ➖ | `formats.code` is edited by the Encoder admin (`E/view/saveConfig.php:24-38`). The default Auto HLS ignores it. Not an uploader feature. |
 | GPU option | ➖ | The Encoder's `ffmpegGPU` only adds `--enable-nvenc`, which is not a valid runtime option (`E/objects/functions.php:32-34`). It does nothing useful. |
 
@@ -145,7 +123,7 @@ Otherwise it shows Low/SD/HD checkboxes (`E/view/index_shareVideos.php:5-7`,
 
 | PHP Encoder feature | LE | Notes |
 | --- | --- | --- |
-| JPG / GIF / WebP | 🟡 | Same commands. Differences: Local Encoder takes the frame at 25 % of the duration (`server.py:274`, `cli.py:252`), the Encoder at 50 %, both capped at 600 s (`E/objects/Encoder.php:2949`). Local Encoder sends them after the video (`server.py:446`); the Encoder sends them before encoding, so the video has a thumbnail while it encodes (`E/objects/Encoder.php:1732-1739`). The link's thumbnail is not used. On failure, Local Encoder skips the image, while the Encoder uploads a "not found" placeholder. |
+| JPG / GIF / WebP | 🟡 | Same commands, same offset (middle of the video, capped at 600 s, `E/objects/Encoder.php:2949`; fixed 2026-10-15). Local Encoder sends them after the video (`server.py:446`); the Encoder sends them before encoding, so the video has a thumbnail while it encodes (`E/objects/Encoder.php:1732-1739`). The link's thumbnail is not used. On failure, Local Encoder skips the image, while the Encoder uploads a "not found" placeholder. |
 | Spectrum image (`spectrumimage`) | ❌ | Auto Audio only (`E/objects/Encoder.php:3015-3045`). |
 
 ## Metadata
@@ -167,9 +145,9 @@ Otherwise it shows Low/SD/HD checkboxes (`E/view/index_shareVideos.php:5-7`,
 | PHP Encoder feature | LE | Notes |
 | --- | --- | --- |
 | Persistent queue with statuses | ❌ | The queue lives in memory, with one worker (`server.py:53-91`), and is lost on restart. The Encoder has 9 statuses (`E/objects/Encoder.php:26-34`). |
-| Priority, delete/cancel, re-queue, "Recheck" (send again without re-encoding) | ❌ | The Encoder's queue actions are at `E/view/index.php:1048-1267`. "Recheck" = resend the kept files: the natural next step after the files-kept fix. |
+| Priority, delete/cancel, re-queue, "Recheck" (send again without re-encoding) | 🟡 | Cancel, “Try again” (reuses the download and the converted files, updates the same video), remove, open folder (`server.py`, `/api/jobs/{id}/…`). No priority. |
 | Automatic retry | 🟡 | Only per upload chunk, the same as `sendFileChunk`. The Encoder also re-runs jobs up to 4 times, and retries transient network errors up to 5 times with a wait of `min(120, 5·n)` minutes (`E/objects/Encoder.php:1298-1379`). |
-| Resume a transfer without re-encoding | 🟡 | Files are kept after a failure, but nothing sends them again yet. |
+| Resume a transfer without re-encoding | ✅ | “Try again” sends the kept files with the same `videos_id`. |
 | Renew site access when the token expires | ❌ | The Encoder has a manual "Renew site access" action (`E/objects/Streamer.php:163-198`). Local Encoder sessions last 12 h, but a queued job does not re-check its token when it starts. |
 | Notify done (success) | 🟡 | Sent. `completion_in_progress` is not retried (`avideo_client.py:668-696`). |
 | Notify `fail=1` on error | ✅ | `AVideoClient.notify_failed`. |
@@ -178,16 +156,30 @@ Otherwise it shows Low/SD/HD checkboxes (`E/view/index_shareVideos.php:5-7`,
 | Upload limit / storage check (`status`) | ➖ | The Encoder does not check either (its `status` read is dead code, `E/view/index.php:860-893`). Checking `max_file_size` before uploading would still help Local Encoder users. |
 | Smallest-first upload order, MP3 last | ✅ | CLI sorts by size (`cli.py:398-400`). The web UI sends MP4s in ascending resolution (`encoder.py:173-176`). The MP3 is sent after the videos, as in the Encoder's non-auto formats (`E/objects/Encoder.php:2394-2406`). |
 | Owner e-mail alerts (EncoderMonitor) | ➖ | Server cron (`E/objects/EncoderMonitor.php`). The local UI shows progress directly. |
-| Live queue view (download %, encode %, ETA) | ✅ | SSE progress (`server.py:697-727`). Speed and ETA are not shown. |
+| Live queue view (download %, encode %, ETA) | ✅ | One SSE stream for the whole queue (`/api/events`); the queue survives page reloads. Speed and ETA are not shown. |
 
 ## Accounts and UI
 
 | PHP Encoder feature | LE | Notes |
 | --- | --- | --- |
-| Several sites and accounts | 🟡 | One account at a time in the UI. Sessions are kept per site on the server (`server.py:165`). |
+| Several sites and accounts | ✅ | Saved sites (address + user, never the password) with one-click switch and remove. |
 | Login with token reuse | ✅ | One login per connection; jobs reuse the token. |
 | Fallback to `objects/*.json.php` without rewrites | ✅ | Covers login, register/finalize and chunk. |
-| UI language selector | ❌ | `E/view/index.header.php` (`changeLang`). Local Encoder is English only. |
+| UI language selector | ✅ | English, Portuguese, Spanish (`static/i18n.js`); the tray follows the OS language. |
+
+## Deviations from the PHP Encoder (deliberate)
+
+- **Hardware encoding** (NVENC, Quick Sync, AMF, VideoToolbox) when a real test encode works,
+  with automatic software fallback (`encoder.detect_video_codec`). The PHP Encoder is software
+  only. With HLS, NVENC/QSV force IDR keyframes (`-forced-idr`) so segments stay independent.
+- A ladder may be split into **several FFmpeg runs** when the hardware limits concurrent
+  outputs; the PHP Encoder always uses one run.
+- HLS maps **`0:v:0`** instead of `0:v`, so cover art or extra video streams are not encoded as
+  more renditions.
+- Unknown height = 1080 in HLS too (PHP's `HLSProcessor` returns 0 and makes only the smallest
+  rendition; Local Encoder follows `Format.php`).
+- Playlist/channel links and live broadcasts are refused with a message (the PHP Encoder strips
+  `list=`); audio-only sources are refused until the spectrum path exists.
 
 ## Local Encoder-only advantages (keep them)
 
@@ -196,27 +188,23 @@ Otherwise it shows Low/SD/HD checkboxes (`E/view/index_shareVideos.php:5-7`,
 - A CLI is available for automation.
 - Packaging as a single executable that opens the web UI on double-click.
 - TLS verification is on by default. The Encoder turns it off (`E/objects/Encoder.php:3164-3165`).
+- Plain-language errors with the next step, in three languages; “Report a problem” zips the logs
+  without secrets.
+- Tray icon, desktop notifications, link preview, drag and drop, and the computer kept awake while
+  working.
 
 ## Prioritized Backlog (audit 2026-10-15)
 
-1. **Defects that break uploads on current AVideo**
-   1. Defect 1: web UI jobs must use `resolve_ffmpeg()`/`resolve_ffprobe()`. A one-line fix
-      (`Config` field defaults).
-   2. Defect 2: `noplaylist`, and drop `list=` like the Encoder.
-   3. Defect 3: parse `videoHLS` (and `allowedResolutions`) from login. Auto → MP4 when HLS is
-      unavailable. Hide the HLS choice.
-   4. Defect 4: detect audio-only sources with ffprobe and give a clear message, or use the
-      spectrum path. Defect 5: assume 1080 when the height is unknown.
+1. **Defects that break uploads on current AVideo** — defects 1, 2, 3, 5 and 6 fixed on
+   2026-10-15. Remaining: the audio/spectrum path (defect 4).
 2. **Features most uploaders use**
-   1. HLS parity: `index.mp4` (`autoConvertToMp4`), `index.mp3` (`autoConvertVideosToMP3`),
-      20 fps at 240p, source aspect ratio in the master playlist.
-   2. Thumbnails: 50 % offset, upload before encoding (register first), use the link thumbnail.
-   3. Per-user `allowedResolutions`. `singleResolution` = one MP4. `saveOriginalVideoResolution`.
+   1. HLS parity: `index.mp4` (`autoConvertToMp4`), `index.mp3` (`autoConvertVideosToMP3`).
+   2. Thumbnails: upload before encoding (register first), use the link thumbnail.
+   3. `singleResolution` = one MP4. `saveOriginalVideoResolution`.
    4. Output validation (10-s decode check) and one encode retry.
    5. Metadata: user groups, release date (+ IANA timezone), override status, replace an
       existing video, a positive `encoder_queue_id`.
-   6. Reliability: "send again" for kept files, encoder log to the site, retry
-      `completion_in_progress`, check `max_file_size` before uploading.
+   6. Reliability: encoder log to the site, retry `completion_in_progress`.
 3. **The rest**
    - Auto Audio/spectrum, extract audio, Auto WebM (deferred), channel import, local folder bulk
      encode, persistent queue, cookies file, create-category link, language selector.
