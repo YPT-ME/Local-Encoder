@@ -41,8 +41,10 @@ class Config:
     password: str = ""
     categories_id: int = 0
     output_dir: Path = field(default_factory=default_work_dir)
-    ffmpeg_bin: str = "ffmpeg"
-    ffprobe_bin: str = "ffprobe"
+    # The bundled binaries are not on PATH in the packaged app: resolve them even when a Config
+    # is built directly (the web UI does), not only through load_config().
+    ffmpeg_bin: str = field(default_factory=resolve_ffmpeg)
+    ffprobe_bin: str = field(default_factory=resolve_ffprobe)
     yt_dlp_bin: str = "yt-dlp"
     streamers_id: int = 0
     keep_files: bool = False

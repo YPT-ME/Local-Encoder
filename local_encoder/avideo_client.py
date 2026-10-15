@@ -65,6 +65,11 @@ class LoginResult:
     name: str = ""
     is_admin: bool = False
     categories: list[dict[str, Any]] = field(default_factory=list)
+    # The site sends ``videoHLS: true`` only when its VideoHLS plugin is enabled; without it the
+    # site cannot play an HLS upload (the PHP Encoder hides HLS then).
+    video_hls: bool = False
+    # Resolutions this user may receive (UserGroups); empty = no restriction.
+    allowed_resolutions: list[int] = field(default_factory=list)
 
 
 @dataclass
@@ -89,8 +94,41 @@ class ServerConfig:
     disable_mp4: bool = False
 
 
+@dataclass
+class SiteStatus:
+    """Limits from AVideo's ``status`` endpoint (0 = unknown or unlimited)."""
+
+    version: str = ""
+    max_file_size: int = 0  # bytes, the PHP upload limit (matters for the multipart fallback)
+    storage_limit_minutes: int = 0
+    storage_used_seconds: int = 0
+
+
 class AVideoAPIError(RuntimeError):
-    """Raised when the AVideo API returns an error response."""
+    """Raised when the AVideo API returns an error response.
+
+    ``code`` is a stable identifier the web UI translates into a message with a next step
+    (see ``local_encoder.errors``); the text stays a readable English fallback.
+    """
+
+    def __init__(
+        self, message: str, code: str = "site_error", params: dict[str, Any] | None = None
+    ) -> None:
+        super().__init__(message)
+        self.code = code
+        self.params = params or {}
+
+
+def _parse_resolutions(value: Any) -> list[int]:
+    if not isinstance(value, list):
+        return []
+    result: list[int] = []
+    for item in value:
+        try:
+            result.append(int(item))
+        except (TypeError, ValueError):
+            continue
+    return sorted(set(result))
 
 
 def _parse_categories(items: Any) -> list[dict[str, Any]]:
@@ -183,7 +221,8 @@ class AVideoClient:
         if status == 429:
             raise AVideoAPIError(
                 f"The site is temporarily limiting requests ({action}). "
-                "Wait a few minutes and try again."
+                "Wait a few minutes and try again.",
+                code="rate_limited",
             )
         try:
             return resp.json()
@@ -201,13 +240,19 @@ class AVideoClient:
         if "Bot Found" in text:
             raise AVideoAPIError(
                 f"The site blocked the request as a robot ({action}). "
-                "Ask the site administrator to allow AVideo encoders."
+                "Ask the site administrator to allow AVideo encoders.",
+                code="bot_blocked",
             )
         if status >= 400:
-            raise AVideoAPIError(f"The site answered with an error (HTTP {status}) while {action}.")
+            raise AVideoAPIError(
+                f"The site answered with an error (HTTP {status}) while {action}.",
+                code="site_http_error",
+                params={"status": status},
+            )
         raise AVideoAPIError(
             f"The site did not answer as an AVideo site while {action}. "
-            "Check the site address and try again."
+            "Check the site address and try again.",
+            code="not_avideo",
         )
 
     def _check_status(self, resp: httpx.Response, action: str) -> None:
@@ -216,10 +261,14 @@ class AVideoClient:
         if resp.status_code in (401, 403):
             raise AVideoAPIError(
                 f"The site refused the request while {action} (HTTP {resp.status_code}). "
-                "Check that your user can upload videos."
+                "Check that your user can upload videos.",
+                code="refused",
+                params={"status": resp.status_code},
             )
         raise AVideoAPIError(
-            f"The site answered with an error (HTTP {resp.status_code}) while {action}."
+            f"The site answered with an error (HTTP {resp.status_code}) while {action}.",
+            code="site_http_error",
+            params={"status": resp.status_code},
         )
 
     # ------------------------------------------------------------------
@@ -244,16 +293,26 @@ class AVideoClient:
         self._check_status(resp, "logging in")
         body = self._json(resp, "logging in")
         if not isinstance(body, dict):
-            raise AVideoAPIError("The site did not answer as an AVideo site while logging in.")
+            raise AVideoAPIError(
+                "The site did not answer as an AVideo site while logging in.", code="not_avideo"
+            )
 
         if body.get("error"):
-            raise AVideoAPIError(f"AVideo login error: {body['error']}")
+            # Captcha, unverified e-mail, two-factor, too many attempts: the site's own words.
+            detail = str(body["error"])[:300]
+            raise AVideoAPIError(
+                f"AVideo login error: {detail}", code="login_error", params={"detail": detail}
+            )
 
         if not body.get("isLogged"):
-            raise AVideoAPIError("Login rejected – check username and password")
+            raise AVideoAPIError(
+                "Login rejected – check username and password", code="wrong_password"
+            )
 
         if not body.get("canUpload"):
-            raise AVideoAPIError("This AVideo user does not have upload permission")
+            raise AVideoAPIError(
+                "This AVideo user does not have upload permission", code="cannot_upload"
+            )
 
         result = LoginResult(
             is_logged=bool(body.get("isLogged")),
@@ -264,6 +323,8 @@ class AVideoClient:
             name=str(body.get("name", "")),
             is_admin=bool(body.get("isAdmin")),
             categories=_parse_categories(body.get("categories")),
+            video_hls=body.get("videoHLS") is True,
+            allowed_resolutions=_parse_resolutions(body.get("allowedResolutions")),
         )
         self.use_login(result)
         logger.info("Logged in as %s (id=%d)", result.username, result.user_id)
@@ -309,6 +370,27 @@ class AVideoClient:
             disable_hls=bool(data.get("doNotShowEncoderAutomaticHLS")),
             disable_mp4=bool(data.get("doNotShowEncoderAutomaticMP4")),
         )
+
+    def get_site_status(self) -> SiteStatus:
+        """Read the upload/storage limits from ``status`` (best effort, never raises)."""
+        for path in ("status", "objects/status.json.php"):
+            try:
+                resp = self._http.get(self._url(path), timeout=15)
+                if resp.status_code == 404:
+                    continue
+                data = resp.json()
+            except Exception as exc:
+                logger.warning("Could not read the site status (%s)", exc)
+                return SiteStatus()
+            if not isinstance(data, dict):
+                return SiteStatus()
+            return SiteStatus(
+                version=str(data.get("version") or ""),
+                max_file_size=_as_int(data.get("file_upload_max_size")) or 0,
+                storage_limit_minutes=_as_int(data.get("videoStorageLimitMinutes")) or 0,
+                storage_used_seconds=_as_int(data.get("currentStorageUsage")) or 0,
+            )
+        return SiteStatus()
 
     def get_categories(self) -> list[dict[str, Any]]:
         """Return list of video categories from AVideo.
@@ -383,8 +465,11 @@ class AVideoClient:
 
         vid = int(body.get("videos_id") or body.get("video_id") or 0)
         if not vid:
+            detail = str(body.get("msg") or "")[:300]
             raise AVideoAPIError(
-                f"Video registration failed – no videos_id returned: {body.get('msg', body)}"
+                f"Video registration failed – no videos_id returned: {detail}",
+                code="register_failed",
+                params={"detail": detail},
             )
 
         return RegisterVideoResult(
@@ -453,7 +538,12 @@ class AVideoClient:
             result = {}
         logger.debug("upload finalize response: %s", result)
         if result.get("error") is True:
-            raise AVideoAPIError(f"The site could not save the file: {result.get('msg', '')}")
+            detail = str(result.get("msg") or "")[:300]
+            raise AVideoAPIError(
+                f"The site could not save the file: {detail}",
+                code="save_failed",
+                params={"detail": detail},
+            )
         return result
 
     def _chunk_body(
@@ -583,7 +673,9 @@ class AVideoClient:
                 _sleep(backoff)
 
         if not assembled_file:
-            raise AVideoAPIError("Server did not return assembled chunk file path")
+            raise AVideoAPIError(
+                "Server did not return assembled chunk file path", code="save_failed"
+            )
         return assembled_file
 
     def _upload_multipart(
@@ -604,7 +696,8 @@ class AVideoClient:
         if resp.status_code == 413:
             raise AVideoAPIError(
                 "The file is larger than this site accepts. "
-                "Ask the site administrator to raise the upload limit."
+                "Ask the site administrator to raise the upload limit.",
+                code="file_too_large",
             )
         if progress_callback:
             progress_callback(file_path.name, file_size, file_size)

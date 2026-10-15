@@ -8,9 +8,11 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 import yt_dlp  # type: ignore[import-untyped]
 import yt_dlp.utils  # type: ignore[import-untyped]
@@ -40,23 +42,36 @@ def _external_tools() -> dict[str, Any]:
     return opts
 
 
+def is_web_url(url: str) -> bool:
+    """True for ``http``/``https`` links with a host – the only links accepted for import."""
+    try:
+        parts = urlsplit(url.strip())
+    except ValueError:
+        return False
+    return parts.scheme.lower() in ("http", "https") and bool(parts.netloc)
+
+
 def download_video(
     url: str,
     output_dir: Path,
     filename_stem: str,
     progress_callback: ProgressCallback | None = None,
     cookies_file: Path | None = None,
+    cancel_event: threading.Event | None = None,
 ) -> Path:
     """Download *url* with yt-dlp and return the path to the local .mp4 file.
 
     Tries multiple format strategies in order (best-quality first) until one
-    succeeds.  Raises ``yt_dlp.utils.DownloadError`` if all strategies fail.
+    succeeds.  Raises ``yt_dlp.utils.DownloadError`` if all strategies fail, and
+    ``yt_dlp.utils.DownloadCancelled`` when *cancel_event* is set.
     """
     output_dir.mkdir(parents=True, exist_ok=True)
     output_template = str(output_dir / f"{filename_stem}.%(ext)s")
     expected_mp4 = output_dir / f"{filename_stem}.mp4"
 
     def _progress_hook(d: dict[str, Any]) -> None:
+        if cancel_event is not None and cancel_event.is_set():
+            raise yt_dlp.utils.DownloadCancelled("Cancelled by the user")
         if progress_callback is None:
             return
         status = d.get("status", "")
@@ -80,7 +95,8 @@ def download_video(
     base_opts: dict[str, Any] = {
         "outtmpl": output_template,
         "merge_output_format": "mp4",
-        "no_playlist": True,
+        # A watch?v=…&list=… link imports only the video, like the PHP Encoder.
+        "noplaylist": True,
         "nocheckcertificate": True,
         "noprogress": True,  # we manage progress via hooks
         "progress_hooks": [_progress_hook],
@@ -129,6 +145,8 @@ def download_video(
 
     last_error: Exception | None = None
     for i, strategy in enumerate(strategies, 1):
+        if cancel_event is not None and cancel_event.is_set():
+            raise yt_dlp.utils.DownloadCancelled("Cancelled by the user")
         opts: dict[str, Any] = {**base_opts, **strategy}
         logger.info("yt-dlp strategy %d/%d: format=%s", i, len(strategies), opts.get("format"))
         try:
@@ -160,7 +178,8 @@ def get_video_info(url: str) -> dict[str, Any]:
         "no_color": True,
         "nocheckcertificate": True,
         "skip_download": True,
-        "no_playlist": True,
+        "noplaylist": True,
+        "socket_timeout": 20,
         **_external_tools(),
     }
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
