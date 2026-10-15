@@ -25,6 +25,10 @@ Official Encoder (`objects/Encoder.php` `sendToStreamer()`):
 - Error codes in responses: `streamer_access_denied`, `destination_unavailable`,
   `completion_in_progress`, `completion_failed`.
 - A response that contains `video_id`, `videos_id` or `video_id_hash` updates the job's IDs.
+- `timezone` is read only by the Scheduler plugin, to convert `releaseDate` into the site's time
+  (`plugin/Scheduler/Scheduler.php:446-449`). Send an IANA name whenever a release date is sent.
+- `encoder_queue_id` must be a top-level field. The Encoder sends it only on the metadata-only
+  `first_request` call (`.compose/encoder/objects/Encoder.php:1498-1512`).
 
 Verified on the local Docker site (https://vlu.me/, 2026-10-15):
 
@@ -46,6 +50,10 @@ Verified on the local Docker site (https://vlu.me/, 2026-10-15):
 | H | `status` → `objects/status.json.php` | GET | — | `max_file_size, file_upload_max_size, videoStorageLimitMinutes, currentStorageUsage, version, plugins{}` |
 | I | `plugin/CustomizeAdvanced/advancedCustom.json.php` | GET | — | Encoder flags: see [the flags list under I](#flags-from-endpoint-i) |
 | J | UI helpers | various | `objects/categories.json.php`; `objects/videos.json.php` (search the user's videos, for "replace existing video"); `objects/usersGroups.json.php`; `objects/videoAddNew.json.php` (create/edit metadata, playlists) | — |
+
+Login (A) adds `videoHLS: true` only when the VideoHLS plugin is enabled
+(`objects/login.json.php:359-362`). Without it the site cannot play an HLS zip, so do not send
+one; the PHP Encoder hides HLS in that case.
 
 The rewrites for A, B, C and H live in `.htaccess`. On installs without rewrites, use the `objects/*.json.php` paths directly.
 
