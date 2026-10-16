@@ -1,6 +1,8 @@
 # Local Encoder
 
 [![Latest release](https://img.shields.io/github/v/release/YPT-ME/Local-Encoder?label=download)](https://github.com/YPT-ME/Local-Encoder/releases/latest)
+[![Total downloads](https://img.shields.io/github/downloads/YPT-ME/Local-Encoder/total?label=total%20downloads)](https://github.com/YPT-ME/Local-Encoder/releases)
+[![Latest release downloads](https://img.shields.io/github/downloads/YPT-ME/Local-Encoder/latest/total?label=latest%20release%20downloads)](https://github.com/YPT-ME/Local-Encoder/releases/latest)
 [![CI](https://github.com/YPT-ME/Local-Encoder/actions/workflows/ci.yml/badge.svg)](https://github.com/YPT-ME/Local-Encoder/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
@@ -31,6 +33,8 @@ To choose the Mac download, open **Apple menu → About This Mac**. If **Chip** 
 The links above contain the program you can open and use. GitHub's green **Code** button and **Source code** downloads are for developers; use the links in this table to get the ready-to-use program.
 
 All versions, checksums and release notes: [Releases](https://github.com/YPT-ME/Local-Encoder/releases).
+
+The **total downloads** badge sums downloads across all releases; **latest release downloads** counts only the newest release and switches automatically when a new version is published. Both use [Shields.io](https://shields.io/badges/git-hub-downloads-all-assets-all-releases) to read each release asset's `download_count` from [GitHub's public API](https://api.github.com/repos/YPT-ME/Local-Encoder/releases?per_page=100), with automatic, cached updates. They include program packages, checksums and attached source archives. Repeat downloads and updates count again, so these measure file downloads rather than unique users or installations.
 
 ### 1. Extract the download and open the program
 
