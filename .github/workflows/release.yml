@@ -277,7 +277,7 @@ jobs:
               lines += ["No code changes since the previous release.", ""]
           repo, version = os.environ["GITHUB_REPOSITORY"], os.environ["VERSION"]
           lines += [f"**Full changelog:** https://github.com/{repo}/compare/{prev}...v{version}", ""]
-          out.write_text("\n".join(lines))
+          out.write_text("\n".join(lines) + "\n")
           print(out.read_text())
           PY
 
