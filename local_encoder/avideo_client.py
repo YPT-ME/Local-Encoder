@@ -278,17 +278,18 @@ class AVideoClient:
     # Public API
     # ------------------------------------------------------------------
 
-    def login(self, username: str, password: str) -> LoginResult:
+    def login(self, username: str, password: str, *, encoded: bool = False) -> LoginResult:
         """Authenticate with AVideo.
 
-        Sends the plain-text password; the server hashes it server-side.
+        Sends the plain-text password by default; the server hashes it server-side.
+        ``encoded=True`` is reserved for an existing server-issued login token.
         On success, stores the encrypted password returned by the server for
         use in all subsequent API calls (``encodedPass=1``).
         """
         data = {
             "user": username,
             "pass": password,
-            "encodedPass": "false",  # tell server to hash the plain password
+            "encodedPass": "1" if encoded else "false",
             "redirectUri": self._base,
         }
         logger.debug("POST %slogin", self._base)
@@ -332,6 +333,32 @@ class AVideoClient:
         self.use_login(result)
         logger.info("Logged in as %s (id=%d)", result.username, result.user_id)
         return result
+
+    def login_from_browser(self, code: str, verifier: str) -> LoginResult:
+        """Exchange a short-lived, single-use code; credentials never enter the browser."""
+        response = self._http.post(
+            self._url("plugin/CustomizeAdvanced/localEncoderLogin.json.php"),
+            data={"action": "redeem", "code": code, "verifier": verifier},
+            follow_redirects=False,
+        )
+        # Do not include a response body or request URL in an exception/log on this path.
+        try:
+            body = response.json()
+        except ValueError:
+            body = None
+        if (
+            response.status_code != 200
+            or not isinstance(body, dict)
+            or body.get("error") is not False
+            or not isinstance(body.get("user"), str)
+            or not isinstance(body.get("pass"), str)
+            or not body["pass"].startswith("_user_hash_")
+        ):
+            raise AVideoAPIError(
+                "Automatic sign-in expired or is unavailable. Open Local Encoder from the site again, or sign in here.",
+                code="browser_login",
+            )
+        return self.login(body["user"], body["pass"], encoded=True)
 
     def use_login(self, login: LoginResult) -> None:
         """Reuse the token of an earlier login instead of logging in again."""

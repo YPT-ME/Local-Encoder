@@ -807,6 +807,7 @@ def _serve(
 
     from local_encoder import tray
     from local_encoder.server import app as fastapi_app
+    from local_encoder.server import close_event_streams, set_quit_handler
 
     base_url = _local_url(host, actual_port)
     desktop.runtime_url = base_url
@@ -823,6 +824,10 @@ def _serve(
     )
     pystray = None if no_tray else tray.load_pystray()
 
+    def stop_server() -> None:
+        close_event_streams()  # an open page's progress stream would delay the exit
+        uv_server.should_exit = True
+
     if pystray is None:
         console.print(f"[bold green]Local Encoder {__version__} is running at {url}[/bold green]")
         console.print("Keep this window open while you use it. Close it to stop Local Encoder.")
@@ -830,7 +835,11 @@ def _serve(
             threading.Thread(
                 target=tray.open_browser_when_ready, args=(uv_server, url), daemon=True
             ).start()
-        uv_server.run()
+        set_quit_handler(stop_server)
+        try:
+            uv_server.run()
+        finally:
+            set_quit_handler(None)
         return
 
     thread = threading.Thread(target=uv_server.run, name="web-server", daemon=True)
@@ -851,10 +860,6 @@ def _serve(
         webbrowser.open(url)
 
     active_jobs, set_notifier = tray.server_hooks()
-
-    def stop_server() -> None:
-        uv_server.should_exit = True
-
     tray_app = tray.TrayApp(
         pystray,
         open_page=lambda: webbrowser.open(url),
@@ -868,19 +873,25 @@ def _serve(
     except (ValueError, OSError):
         pass
     set_notifier(tray_app.notify)
+    # The page's Stop button: remove the icon too, which ends tray_app.run().
+    set_quit_handler(tray_app.stop)
     try:
         shown = tray_app.run()
     finally:
         set_notifier(None)
+        set_quit_handler(None)
         if previous_sigint is not None:
             signal.signal(signal.SIGINT, previous_sigint)
 
     if not shown:
         console.print("Keep this window open while you use it. Close it to stop Local Encoder.")
+        set_quit_handler(stop_server)
         try:
             while thread.is_alive():
                 thread.join(0.5)
         except KeyboardInterrupt:
             pass
+        finally:
+            set_quit_handler(None)
     stop_server()
     thread.join(15)

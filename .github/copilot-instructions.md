@@ -54,7 +54,9 @@ session id in browser `localStorage` (never the password); the page's remembered
 `settings.json`. Logs, history, settings and the work folder:
 `~/.local/share/local-encoder/` (`LOCAL_ENCODER_WORK_DIR` overrides the work folder). The web UI
 listens on `127.0.0.1:47800` (another free port if busy; a second start just reopens the page).
-`serve` runs in the tray icon (`tray.py`; no console window on Windows) and keeps the computer
+`serve` runs in the tray icon (`tray.py`; no console window on Windows); the page's Stop button
+(`/api/quit`) and closing the last idle page (`/api/page-closed`, 5 s grace for reloads/other
+tabs) also quit it through `server.set_quit_handler`. It keeps the computer
 awake while videos are processed (`keep_awake.py`). The page is in English, Portuguese and
 Spanish (`static/i18n.js`).
 

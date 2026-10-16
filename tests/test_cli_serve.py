@@ -52,7 +52,13 @@ class FakeTrayApp:
     def notify(self, kind: str, title: str) -> None:
         pass
 
+    def stop(self) -> None:
+        self.kwargs["on_quit"]()
+
     def run(self) -> bool:
+        from local_encoder import server
+
+        self.quit_handler = server._quit_handler  # what the page's Stop button calls
         if FakeTrayApp.shown:
             self.kwargs["on_quit"]()  # the user chose Quit
         return FakeTrayApp.shown
@@ -192,6 +198,10 @@ def test_tray_mode_runs_server_in_thread_and_quits(env: dict[str, Any]) -> None:
 
     tray_app = FakeTrayApp.instances[0]
     assert env["notifier"] == [tray_app.notify, None]
+    assert tray_app.quit_handler == tray_app.stop  # the page's Stop button removes the icon too
+    from local_encoder import server as server_module
+
+    assert server_module._quit_handler is None
     tray_app.kwargs["open_page"]()
     assert env["opened"][-1] == "http://127.0.0.1:47800"
 

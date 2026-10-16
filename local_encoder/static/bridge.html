@@ -2,11 +2,45 @@
 <html lang="en"><head><meta charset="utf-8"><meta name="referrer" content="no-referrer"><title>Local Encoder discovery</title></head>
 <body><script>
 'use strict';
-// Read-only discovery. Never return sessions, sites, files or job information.
+// Discovery exposes only a public challenge. Login codes travel by message and POST, never URL.
+var discovery = null;
+var authorizing = false;
 window.addEventListener('message', function (event) {
   if (window.parent === window || event.source !== window.parent || !/^https?:\/\//.test(event.origin)) return;
   var data = event.data;
-  if (!data || data.type !== 'avideo-local-encoder:discover' || typeof data.nonce !== 'string' || !/^[a-f0-9]{32}$/.test(data.nonce)) return;
-  event.source.postMessage({ type: 'avideo-local-encoder:ready', nonce: data.nonce, protocol: 1 }, event.origin);
+  if (!data || typeof data.nonce !== 'string' || !/^[a-f0-9]{32}$/.test(data.nonce)) return;
+  if (data.type === 'avideo-local-encoder:authorize') {
+    if (!discovery || authorizing || event.origin !== discovery.origin || data.nonce !== discovery.nonce
+        || typeof data.code !== 'string' || !/^[a-f0-9]{64}$/.test(data.code) || typeof data.site !== 'string') return;
+    var site;
+    try {
+      site = new URL(data.site);
+      if (!/^https?:$/.test(site.protocol) || !site.hostname || site.username || site.password || site.search || site.hash
+          || data.site.length > 8192 || /[\s\\]/.test(data.site)) return;
+      site.pathname = site.pathname.replace(/\/+$/, '') + '/';
+    } catch (_) { return; }
+    authorizing = true;
+    fetch('/api/browser-login', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Local-Encoder': '1' },
+      body: JSON.stringify({ server_url: site.href, code: data.code, state: data.nonce })
+    }).then(function (r) { if (!r.ok) throw new Error('authorization'); return r.json(); }).then(function (result) {
+      event.source.postMessage({ type: 'avideo-local-encoder:authorized', nonce: data.nonce, protocol: 1, ok: result.ok === true }, event.origin);
+    }).catch(function () {
+      event.source.postMessage({ type: 'avideo-local-encoder:authorized', nonce: data.nonce, protocol: 1, ok: false }, event.origin);
+    });
+    return;
+  }
+  if (data.type !== 'avideo-local-encoder:discover' || authorizing) return;
+  var reply = { type: 'avideo-local-encoder:ready', nonce: data.nonce, protocol: 1 };
+  // Only the public proof-key challenge crosses origins; the verifier stays in the server.
+  fetch('/api/desktop?state=' + data.nonce, { cache: 'no-store' }).then(function (r) {
+    if (!r.ok) throw new Error('discovery');
+    return r.json();
+  }).then(function (info) {
+    if (typeof info.login_challenge === 'string' && /^[A-Za-z0-9_-]{43}$/.test(info.login_challenge)) {
+      reply.login_challenge = info.login_challenge;
+      discovery = { origin: event.origin, nonce: data.nonce };
+    }
+    event.source.postMessage(reply, event.origin);
+  }).catch(function () { event.source.postMessage(reply, event.origin); });
 });
 </script></body></html>

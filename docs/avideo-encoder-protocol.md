@@ -114,6 +114,14 @@ The other fields:
 
 ## Authentication details
 
+- Updated Streamers optionally provide `plugin/CustomizeAdvanced/localEncoderLogin.json.php`:
+  POST `action=issue,challenge,globalToken` from an authenticated uploader, or verified Encoder
+  `user,pass,encodedPass=1` instead of browser CSRF. POST `action=redeem,code,verifier` exchanges
+  the 120-second single-use S256 grant for the normal `user,pass` token. Local Encoder validates
+  that token through the existing login endpoint with `encodedPass=1`; it never weakens normal
+  login or upload checks. See [browser integration](browser-integration.md) for transport and
+  fallback behavior. Older Streamers keep the normal username/password connection flow.
+
 - The token from A is the only "already encoded" password current Streamers accept; pass-the-hash was removed. Always reuse the exact `pass` value returned by login.
 - When `video_id_hash` is present, the Streamer authenticates as the video owner (`useVideoHashOrLogin()`).
 - Every `*.json.php` goes through `autoCSRFGuard`.

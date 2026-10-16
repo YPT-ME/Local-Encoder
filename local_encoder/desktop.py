@@ -1,15 +1,19 @@
 """Browser handoff: public discovery, validated links and per-user OS registration.
 
-An external link only prepares the interface. It cannot log in, read a local file,
-start a download or add a job. Credentials never travel in the handoff.
+An external link only prepares the interface. Browser authorization uses a separate,
+proof-key-bound exchange; native links never contain credentials or submit jobs.
 """
 
 from __future__ import annotations
 
+import base64
+import hashlib
+import hmac
 import json
 import logging
 import os
 import plistlib
+import re
 import secrets
 import shlex
 import subprocess
@@ -33,6 +37,26 @@ DATA_DIR = APP_DATA_DIR
 runtime_url = ""
 startup_guard: StartupLock | None = None
 logger = logging.getLogger(__name__)
+_LOGIN_KEY = secrets.token_bytes(32)
+
+
+def login_verifier(state: str) -> str:
+    """A different proof key per discovery, known only to this application instance."""
+    if not re.fullmatch(r"[a-f0-9]{32}", state):
+        raise ValueError("Invalid browser login state")
+    return (
+        base64.urlsafe_b64encode(hmac.digest(_LOGIN_KEY, state.encode(), "sha256"))
+        .decode()
+        .rstrip("=")
+    )
+
+
+def login_challenge(state: str) -> str:
+    return (
+        base64.urlsafe_b64encode(hashlib.sha256(login_verifier(state).encode()).digest())
+        .decode()
+        .rstrip("=")
+    )
 
 
 def web_url(value: str, *, site: bool = False) -> str:

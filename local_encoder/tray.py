@@ -325,8 +325,11 @@ class TrayApp:
             logger.warning("Could not open the browser", exc_info=True)
 
     def _quit_clicked(self, icon: Any = None, item: Any = None) -> None:
-        if not self.request_quit():
-            return
+        if self.request_quit():
+            self.stop()
+
+    def stop(self) -> None:
+        """Quit without asking (Quit confirmed, or the page's Stop button); any thread."""
         self._stopping.set()
         try:
             self._on_quit()

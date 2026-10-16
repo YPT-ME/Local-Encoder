@@ -20,13 +20,13 @@ test('browser handoff preserves a provider URL and rejects credentials, local fi
   assert.equal(handoff.fromFragment('#avideo=%invalid').invalid, true);
 });
 
-test('an external site is not silently mapped to another saved account or submitted', () => {
-  const start = html.indexOf('  function acceptHandoff()');
+test('a browser link fills the normal form without selecting or submitting a saved account', () => {
+  const start = html.indexOf('  function prepareHandoff(request)');
   const end = html.indexOf('  useEffect(', start);
   const state = { form: null, connection: null, active: 'old', selected: null };
   const context = {
     handoff: { site: 'https://destination.test/', url: 'https://provider.test/watch?v=1' },
-    sites: [{ url: 'https://other.test/', username: 'admin', sessionId: 'other-session' }],
+    sites: [{ url: 'https://destination.test/', username: 'another-user', sessionId: 'saved-session' }],
     normUrl: url => url,
     connectionGeneration: { current: 0 },
     setConn: value => { state.connection = value; }, setCategories() {},
@@ -35,9 +35,10 @@ test('an external site is not silently mapped to another saved account or submit
     selectSite: value => { state.selected = value; }, setHandoff() {},
   };
   vm.createContext(context);
-  vm.runInContext(html.slice(start, end) + '\nacceptHandoff();', context);
+  vm.runInContext(html.slice(start, end) + '\nprepareHandoff(handoff);', context);
   assert.equal(state.form.url, 'https://destination.test/');
   assert.equal(state.form.password, '');
+  assert.equal(state.form.user, '');
   assert.equal(state.connection.state, 'none');
   assert.equal(state.active, '');
   assert.equal(state.selected, null);
@@ -64,6 +65,72 @@ test('a delayed response from a previous site cannot replace the handoff destina
   await pending;
   assert.equal(state.applied, false);
   assert.equal(state.updates, 0);
+});
+
+test('browser login carries only public correlation in the fragment and rejects authorization codes there', () => {
+  const link = 'avideo-local-encoder://open?site=https%3A%2F%2Fvideo.test%2F';
+  const fragment = '#avideo=' + encodeURIComponent(link);
+  assert.equal(handoff.fromFragment(fragment + '&state=' + 'a'.repeat(32)).loginState, 'a'.repeat(32));
+  for (const suffix of ['&login=' + 'b'.repeat(64), '&state=bad', '&state=' + 'a'.repeat(32) + '&state=' + 'c'.repeat(32)]) {
+    assert.equal(handoff.fromFragment(fragment + suffix).invalid, true);
+  }
+});
+
+test('automatic connection uses the authorized account and ignores a late previous account response', async () => {
+  const start = html.indexOf('  async function connectBrowserHandoff(request)');
+  const end = html.indexOf('  function prepareHandoff(request)', start);
+  const state = { applied: [], form: null, calls: [] };
+  const pending = [];
+  const ctx = {
+    connectionGeneration: { current: 0 }, normUrl: url => url,
+    setConn() {}, setCategories() {}, setActiveKey() {}, setEditing() {}, setTab() {}, setVideoUrl() {}, setHandoff() {},
+    setForm(value) { state.form = typeof value === 'function' ? value(state.form) : value; },
+    api(endpoint, body) { state.calls.push({ endpoint, body }); return new Promise(resolve => pending.push(resolve)); },
+    applyConnection(data) { state.applied.push(data.username); }, showToast() {}, t: key => key,
+  };
+  vm.createContext(ctx);
+  vm.runInContext(html.slice(start, end), ctx);
+  const first = ctx.connectBrowserHandoff({ site: 'https://first.test/', loginState: 'a'.repeat(32) });
+  const second = ctx.connectBrowserHandoff({ site: 'https://second.test/', loginState: 'c'.repeat(32) });
+  pending[1]({ ok: true, data: { ok: true, site: { url: 'https://second.test/' }, username: 'bob' } });
+  await second;
+  pending[0]({ ok: true, data: { ok: true, site: { url: 'https://first.test/' }, username: 'alice' } });
+  await first;
+  assert.deepEqual(state.applied, ['bob']);
+  assert.equal(state.form.url, 'https://second.test/');
+  assert.equal(state.form.user, 'bob');
+  assert.equal(state.form.password, '');
+  assert.ok(state.calls.every(call => call.endpoint === '/api/browser-login/claim' && !('code' in call.body)));
+});
+
+test('the bridge accepts authorization only after discovery from its exact parent and never returns a session', async () => {
+  const source = fs.readFileSync(path.join(__dirname, '../local_encoder/static/bridge.html'), 'utf8').match(/<script>([\s\S]*?)<\/script>/)[1];
+  const replies = [], requests = [];
+  const parent = { postMessage(data, origin) { replies.push({ data, origin }); } };
+  let receive;
+  const ctx = { URL, window: { parent, addEventListener(name, fn) { receive = fn; } },
+    fetch(url, opts) { requests.push({ url, opts }); return Promise.resolve({ ok: true, json: async () => url.startsWith('/api/desktop') ? { login_challenge: 'c'.repeat(43) } : { ok: true, session_id: 'private-session', pass: 'private-token' } }); } };
+  vm.createContext(ctx);
+  vm.runInContext(source, ctx);
+  const nonce = 'a'.repeat(32);
+  const authorize = { source: parent, origin: 'https://video.test', data: { type: 'avideo-local-encoder:authorize', nonce, code: 'b'.repeat(64), site: 'https://video.test/' } };
+  receive(authorize);
+  assert.equal(requests.length, 0);
+  receive({ source: parent, origin: 'https://video.test', data: { type: 'avideo-local-encoder:discover', nonce } });
+  await new Promise(setImmediate);
+  for (const override of [{ source: {} }, { origin: 'https://other.test' }, { data: { ...authorize.data, nonce: 'c'.repeat(32) } }]) receive({ ...authorize, ...override });
+  assert.equal(requests.length, 1);
+  receive(authorize);
+  await new Promise(setImmediate);
+  assert.equal(requests.length, 2);
+  assert.equal(requests[1].url, '/api/browser-login');
+  assert.equal(requests[1].opts.headers['X-Local-Encoder'], '1');
+  assert.equal(JSON.parse(requests[1].opts.body).code, 'b'.repeat(64));
+  assert.equal(replies[1].data.type, 'avideo-local-encoder:authorized');
+  assert.equal(replies[1].data.ok, true);
+  assert.ok(!JSON.stringify(replies).includes('private-'));
+  receive(authorize);
+  assert.equal(requests.length, 2);
 });
 
 function harness(statuses) {

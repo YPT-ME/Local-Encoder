@@ -71,6 +71,11 @@ Found in the 2026-10-15 baseline and fixed the same day. Unit-tested; the audit 
    - Passwords saved by older versions are removed (`static/index.html:217-220`).
    - The AVideo token stays in a server-side session for 12 h (`server.py:151-175`).
 8. ✅ **One login per connection.** Jobs reuse the token (`server.py:197-209`, `server.py:377`).
+9. ✅ **Opening from an authenticated AVideo or Web Encoder session can connect automatically.**
+   A short-lived, single-use proof-key exchange returns the normal AVideo token directly to the
+   local server. The Web Encoder keeps the account scoped to its current Streamer. Passwords,
+   reusable tokens and authorization codes stay out of navigation/native URLs; older versions
+   retain manual sign-in. See [browser integration](browser-integration.md).
 
 Fixed while packaging (2026-10-15), re-verified:
 

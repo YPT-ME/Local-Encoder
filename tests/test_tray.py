@@ -212,6 +212,14 @@ def test_quit_without_jobs_stops_immediately() -> None:
     assert icon.notifications == []
 
 
+def test_stop_from_the_page_does_not_ask_even_with_jobs() -> None:
+    app, events, icon = started_app([2])
+    app.stop()
+    assert events == ["quit"]
+    assert icon.stopped
+    assert icon.notifications == []
+
+
 def test_quit_with_jobs_needs_a_second_click_within_15_seconds() -> None:
     clock = Clock()
     app, events, icon = started_app([2], clock=clock)

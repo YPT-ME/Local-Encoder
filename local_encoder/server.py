@@ -7,6 +7,7 @@ Start with:
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -142,6 +143,8 @@ class _Session:
 
 
 _sessions: dict[str, _Session] = {}
+_browser_logins: dict[str, tuple[str, str, float]] = {}
+_browser_login_lock = threading.Lock()
 
 
 def _get_session(session_id: str) -> _Session:
@@ -234,6 +237,15 @@ class SessionRequest(BaseModel):
     session_id: str
 
 
+class BrowserLoginClaim(BaseModel):
+    server_url: str
+    state: str
+
+
+class BrowserLoginRequest(BrowserLoginClaim):
+    code: str
+
+
 class PreviewRequest(BaseModel):
     url: str
 
@@ -314,6 +326,13 @@ def _subscribe() -> queue.Queue[str | None]:
         subscriber.put(_sse("jobs", {"jobs": jobs}))
         _subscribers.append(subscriber)
     return subscriber
+
+
+def close_event_streams() -> None:
+    """End every open progress stream now (quitting would otherwise wait for its keepalive)."""
+    with _state_lock:
+        for subscriber in _subscribers:
+            subscriber.put(None)
 
 
 def _unsubscribe(subscriber: queue.Queue[str | None]) -> None:
@@ -453,6 +472,40 @@ def set_notifier(fn: Callable[[str, str], None] | None) -> None:
 def active_job_count() -> int:
     """Jobs waiting or running (the tray asks before quitting while there are any)."""
     return sum(1 for job in _jobs.values() if job.status in ACTIVE)
+
+
+# Set by ``local-encoder serve``: stops Local Encoder (web server and tray icon). None when the
+# app was started another way (tests, a bare uvicorn), so the page hides its Stop button.
+_quit_handler: Callable[[], None] | None = None
+# Pages following the queue, by the id each page picks (open streams per page). A closed page
+# says so itself: the server notices a dropped stream only at its next keepalive.
+_open_pages: dict[str, int] = {}
+# A reload, or another Local Encoder tab, opens its stream within this time after a page closes.
+PAGE_CLOSED_GRACE_SECONDS = 5.0
+
+
+def set_quit_handler(fn: Callable[[], None] | None) -> None:
+    global _quit_handler
+    _quit_handler = fn
+
+
+def _quit_soon(delay: float = 0.3) -> None:
+    """Run the quit handler a moment later, so the current response still reaches the page."""
+    handler = _quit_handler
+    if handler is None:
+        return
+    timer = threading.Timer(delay, handler)
+    timer.daemon = True
+    timer.start()
+
+
+def _quit_if_unused() -> None:
+    """After a page closed: stop Local Encoder if no page is open and nothing is processing."""
+    with _state_lock:
+        if _open_pages or active_job_count():
+            return
+    logger.info("The page was closed and no video is being processed; stopping Local Encoder")
+    _quit_soon(0)
 
 
 def stop_running_jobs(timeout: float = 10.0) -> None:
@@ -941,6 +994,58 @@ def check_session(req: SessionRequest) -> dict[str, Any]:
     return _session_info(req.session_id, _get_session(req.session_id))
 
 
+@app.post("/api/browser-login")
+def browser_login(req: BrowserLoginRequest) -> dict[str, Any]:
+    """Connect the account that authorized this instance; never start a media job."""
+    try:
+        url = desktop.web_url(req.server_url, site=True)
+        if not re.fullmatch(r"[a-f0-9]{64}", req.code):
+            raise ValueError("Invalid authorization code")
+        verifier = desktop.login_verifier(req.state)
+        with AVideoClient(url) as client:
+            result = client.login_from_browser(req.code, verifier)
+            config = client.get_server_config()
+            status = client.get_site_status()
+        session_id = secrets.token_urlsafe(24)
+        session = _Session(url, True, result, time.time(), config, status)
+        _sessions[session_id] = session
+        with _browser_login_lock:
+            now = time.monotonic()
+            for state in list(_browser_logins):
+                if now - _browser_logins[state][2] > 60:
+                    del _browser_logins[state]
+            if len(_browser_logins) >= 128:
+                del _browser_logins[next(iter(_browser_logins))]
+            _browser_logins[req.state] = (session_id, url, now)
+        # Never send the local session id, identity or credentials to the parent website.
+        return {"ok": True}
+    except Exception as exc:
+        # Authorization data and server responses must never reach logs or error details.
+        code = classify(exc).code
+        if code not in (
+            "tls_error",
+            "site_unreachable",
+            "site_timeout",
+            "cannot_upload",
+            "rate_limited",
+        ):
+            code = "browser_login"
+        problem = classify(LocalEncoderError(code))
+        return {"ok": False, "error": problem.message, "error_info": problem.to_dict()}
+
+
+@app.post("/api/browser-login/claim")
+def claim_browser_login(req: BrowserLoginClaim) -> dict[str, Any]:
+    """Only the local control page can claim the result; state alone is no credential."""
+    with _browser_login_lock:
+        pending = _browser_logins.get(req.state)
+        if not pending or pending[1] != req.server_url or time.monotonic() - pending[2] > 60:
+            problem = classify(LocalEncoderError("browser_login"))
+            return {"ok": False, "error_info": problem.to_dict()}
+        del _browser_logins[req.state]
+    return _session_info(pending[0], _get_session(pending[0]))
+
+
 @app.post("/api/logout")
 def logout(req: SessionRequest) -> dict[str, Any]:
     """Forget a site's session (the browser removed the saved site)."""
@@ -954,8 +1059,14 @@ def logout(req: SessionRequest) -> dict[str, Any]:
 
 
 @app.get("/api/desktop")
-def desktop_info() -> dict[str, Any]:
-    return {"app": desktop.APP_ID, "protocol": 1, "instance": desktop.INSTANCE_ID}
+def desktop_info(state: str = "") -> JSONResponse:
+    result = {"app": desktop.APP_ID, "protocol": 1, "instance": desktop.INSTANCE_ID}
+    if state:
+        try:
+            result["login_challenge"] = desktop.login_challenge(state)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid discovery state") from None
+    return JSONResponse(result, headers={"Cache-Control": "no-store"})
 
 
 @app.get("/bridge", response_class=HTMLResponse)
@@ -979,6 +1090,7 @@ def version_info() -> dict[str, Any]:
         "update_available": False,
         "latest": None,
         "download_url": updates.DOWNLOAD_PAGE,
+        "can_quit": _quit_handler is not None,
     }
     if not updates.is_frozen():
         return result  # running from source: the developer updates with git
@@ -1230,9 +1342,13 @@ def list_jobs() -> list[dict[str, Any]]:
 
 
 @app.get("/api/events")
-def queue_events() -> StreamingResponse:
+def queue_events(page: str = "") -> StreamingResponse:
     """SSE for the whole queue: first ``jobs`` (every job's full state), then each change."""
+    page = page[:64]
     subscriber = _subscribe()
+    if page:
+        with _state_lock:
+            _open_pages[page] = _open_pages.get(page, 0) + 1
 
     def _generate() -> Generator[str, None, None]:
         try:
@@ -1248,12 +1364,43 @@ def queue_events() -> StreamingResponse:
                 yield msg
         finally:
             _unsubscribe(subscriber)
+            with _state_lock:
+                if _open_pages.get(page, 0) > 1:
+                    _open_pages[page] -= 1
+                else:
+                    _open_pages.pop(page, None)
 
     return StreamingResponse(
         _generate(),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+class PageClosedRequest(BaseModel):
+    page: str = ""
+
+
+@app.post("/api/quit")
+def quit_app() -> dict[str, bool]:
+    """The page's Stop button: quit Local Encoder (videos in progress stop, files are kept)."""
+    if _quit_handler is None:
+        return {"ok": False}
+    logger.info("Stop requested from the page")
+    _quit_soon()
+    return {"ok": True}
+
+
+@app.post("/api/page-closed")
+def page_closed(req: PageClosedRequest) -> dict[str, bool]:
+    """The page was closed with nothing to process: quit unless it comes back or another is open."""
+    with _state_lock:
+        _open_pages.pop(req.page[:64], None)
+    if _quit_handler is not None:
+        timer = threading.Timer(PAGE_CLOSED_GRACE_SECONDS, _quit_if_unused)
+        timer.daemon = True
+        timer.start()
+    return {"ok": True}
 
 
 @app.post("/api/jobs/{job_id}/cancel")
@@ -1449,5 +1596,12 @@ def report_problem(req: ReportRequest) -> dict[str, Any]:
 def index() -> HTMLResponse:
     html_file = STATIC_DIR / "index.html"
     if html_file.exists():
-        return HTMLResponse(html_file.read_text(encoding="utf-8"))
+        html = html_file.read_text(encoding="utf-8")
+        # A browser can retain scripts from an older packaged app at this same local address.
+        for name in ("i18n.js", "desktop.js"):
+            asset = STATIC_DIR / name
+            if asset.is_file():
+                revision = hashlib.sha256(asset.read_bytes()).hexdigest()[:16]
+                html = html.replace(f'"/static/{name}"', f'"/static/{name}?v={revision}"')
+        return HTMLResponse(html, headers={"Cache-Control": "no-store"})
     return HTMLResponse("<h1>UI not found</h1><p>Place index.html in local_encoder/static/</p>")

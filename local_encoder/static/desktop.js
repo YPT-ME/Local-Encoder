@@ -1,4 +1,4 @@
-// Only a validated site address and optional HTTP(S) media URL cross the browser handoff.
+// Validated site/media and optional public correlation only; no authorization codes in URLs.
 (function (root) {
   'use strict';
   function address(value, site) {
@@ -21,7 +21,17 @@
   }
   function fromFragment(fragment) {
     if (!fragment.startsWith('#avideo=')) return null;
-    try { return parse(decodeURIComponent(fragment.slice(8))); } catch (_) { return { invalid: true }; }
+    try {
+      if (fragment.length > 73000) throw new Error('link');
+      var params = new URLSearchParams(fragment.slice(1));
+      params.forEach(function (_, key) { if (!/^(avideo|state)$/.test(key) || params.getAll(key).length !== 1) throw new Error('parameter'); });
+      var result = parse(params.get('avideo'));
+      if (params.has('state')) {
+        if (!/^[a-f0-9]{32}$/.test(params.get('state') || '')) throw new Error('authorization');
+        result.loginState = params.get('state');
+      }
+      return result;
+    } catch (_) { return { invalid: true }; }
   }
   root.LocalEncoderHandoff = { parse: parse, address: address, fromFragment: fromFragment };
   if (typeof module !== 'undefined') module.exports = root.LocalEncoderHandoff;

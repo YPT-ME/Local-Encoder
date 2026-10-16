@@ -65,6 +65,10 @@ MESSAGES: dict[str, str] = {
         "administrator to enable uploads for it."
     ),
     "session_expired": "Your connection to the site expired. Type your password and connect again.",
+    "browser_login": (
+        "Automatic sign-in expired or is unavailable. Open Local Encoder from the site again, "
+        "or sign in here with your user name and password."
+    ),
     "rate_limited": "The site is limiting requests right now. Wait a few minutes and try again.",
     "bot_blocked": (
         "The site blocked Local Encoder as a robot. Ask the site administrator to allow "

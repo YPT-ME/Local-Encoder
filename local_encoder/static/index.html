@@ -311,6 +311,7 @@ const ICONS = {
   edit:      () => <><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 013 3L7 19l-4 1 1-4z"/></>,
   refresh:   () => <><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></>,
   stop:      () => <rect x="6" y="6" width="12" height="12" rx="1"/>,
+  power:     () => <><path d="M18.36 6.64a9 9 0 11-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/></>,
   chevdown:  () => <polyline points="6 9 12 15 18 9"/>,
   chevright: () => <polyline points="9 18 15 12 9 6"/>,
   help:      () => <><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 015.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></>,
@@ -792,6 +793,11 @@ function Main({ prefs, setPref }) {
   jobsRef.current = jobs;
 
   const [versionInfo, setVersionInfo] = useState(null);
+  // Stopping Local Encoder from the page: this page's id lets the server tell a reload or
+  // another open tab from the last page being closed.
+  const pageId = useRef(Math.random().toString(36).slice(2) + Date.now().toString(36)).current;
+  const eventsRef = useRef(null);
+  const [stopped, setStopped] = useState(false);
   const [system, setSystem] = useState(null);
   const [toast, setToast] = useState(null);
   const [dragging, setDragging] = useState(false);
@@ -889,26 +895,53 @@ function Main({ prefs, setPref }) {
     setEditing(true);
   }
 
-  function acceptHandoff() {
-    if (!handoff || handoff.invalid) return;
+  async function connectBrowserHandoff(request) {
+    const generation = ++connectionGeneration.current;
+    setConn({ state: 'connecting' });
+    setCategories([]);
+    setForm({ url: request.site, user: '', password: '', sslVerify: true });
+    setActiveKey('');
+    setEditing(true);
+    if (request.url) { setTab('link'); setVideoUrl(request.url); }
+    try {
+      const r = await api('/api/browser-login/claim', { server_url: request.site, state: request.loginState });
+      if (generation !== connectionGeneration.current) return;
+      if (r.ok && r.data && r.data.ok && normUrl(r.data.site.url) === normUrl(request.site)) {
+        applyConnection(r.data, { username: r.data.username, sslVerify: true });
+        setForm(f => ({ ...f, user: r.data.username, password: '' }));
+        setHandoff(null);
+        showToast(t('handoff.connected', { user: r.data.username }));
+      } else {
+        setConn({ state: 'error', error: (r.data && r.data.error_info) || { code: 'browser_login' } });
+        setHandoff(null);
+      }
+    } catch {
+      if (generation === connectionGeneration.current) {
+        setConn({ state: 'error', error: { code: 'browser_login' } });
+        setHandoff(null);
+      }
+    }
+  }
+
+  function prepareHandoff(request) {
+    if (!request || request.invalid) return;
     ++connectionGeneration.current;
     setConn({ state: 'none' });
     setCategories([]);
-    setForm({ url: handoff.site, user: '', password: '', sslVerify: true });
+    setForm({ url: request.site, user: '', password: '', sslVerify: true });
     setActiveKey('');
     setEditing(true);
-    if (handoff.url) { setTab('link'); setVideoUrl(handoff.url); }
-    const matching = sites.filter(s => normUrl(s.url) === normUrl(handoff.site));
-    if (matching.length === 1) selectSite(matching[0]);
-    setHandoff(null);
+    if (request.url) { setTab('link'); setVideoUrl(request.url); }
   }
 
   useEffect(() => {
     function readHandoff() {
       const request = LocalEncoderHandoff.fromFragment(window.location.hash);
       if (request) {
-        setHandoff(request);
+        setHandoff(request.invalid ? request : null);
         window.history.replaceState(null, '', window.location.pathname + window.location.search);
+        if (request.loginState) connectBrowserHandoff(request);
+        else prepareHandoff(request);
       }
     }
     readHandoff();
@@ -924,7 +957,8 @@ function Main({ prefs, setPref }) {
     fetch('/api/version').then(r => r.json()).then(setVersionInfo).catch(() => {});
 
     // One stream for the whole queue: it first sends every job, also after a reconnection.
-    const es = new EventSource('/api/events');
+    const es = new EventSource('/api/events?page=' + encodeURIComponent(pageId));
+    eventsRef.current = es;
     es.addEventListener('jobs', e => setJobs(JSON.parse(e.data).jobs || []));
     es.addEventListener('added', e => {
       const j = JSON.parse(e.data);
@@ -992,6 +1026,42 @@ function Main({ prefs, setPref }) {
     window.addEventListener('beforeunload', h);
     return () => window.removeEventListener('beforeunload', h);
   }, [transfers.length]);
+
+  // Stop button and closing the page. Videos keep being processed after the page closes, so
+  // only an idle Local Encoder stops with it. Browsers let a closing page ask only with their
+  // own "Leave site?" question; leaving then stops Local Encoder unless the page reloads or
+  // another Local Encoder tab is open (the server waits a few seconds to see).
+  const canQuit = !!(versionInfo && versionInfo.can_quit);
+  const busy = transfers.length > 0 || jobs.some(j => j.status === 'running' || j.status === 'pending');
+  const stopsOnClose = canQuit && !busy && !stopped;
+  useEffect(() => {
+    if (!stopsOnClose) return;
+    const ask = e => { e.preventDefault(); e.returnValue = ''; return ''; };
+    const closed = e => {
+      if (e.persisted) return; // kept in the back/forward cache: the page may come back
+      fetch('/api/page-closed', {
+        method: 'POST', keepalive: true,
+        headers: { 'Content-Type': 'application/json', 'X-Local-Encoder': '1' },
+        body: JSON.stringify({ page: pageId }),
+      }).catch(() => {});
+    };
+    window.addEventListener('beforeunload', ask);
+    window.addEventListener('pagehide', closed);
+    return () => {
+      window.removeEventListener('beforeunload', ask);
+      window.removeEventListener('pagehide', closed);
+    };
+  }, [stopsOnClose, pageId]);
+
+  async function quitApp() {
+    if (!confirm(t(busy ? 'quit.confirm_busy' : 'quit.confirm'))) return;
+    setStopped(true);
+    try {
+      const r = await api('/api/quit');
+      if (!r.ok || !(r.data && r.data.ok)) { setStopped(false); showToast(t('quit.failed')); return; }
+    } catch {} // the connection may already be closing: Local Encoder is stopping
+    if (eventsRef.current) eventsRef.current.close();
+  }
 
   // Link preview (title, picture, length) a moment after the user stops typing.
   useEffect(() => {
@@ -1222,24 +1292,26 @@ function Main({ prefs, setPref }) {
           </select>
         </label>
         <Btn variant="link" size="sm" onClick={() => report('')}><Ico name="help" size={13} />{t('header.report')}</Btn>
+        {canQuit && <Btn variant="danger" size="sm" onClick={quitApp} disabled={stopped} title={t('header.quit_hint')}>
+          <Ico name="power" size={13} />{t('header.quit')}
+        </Btn>}
         {versionInfo && <span className="text-xs text-slate-600">v{versionInfo.version}</span>}
       </header>
+
+      {stopped && (
+        <div className="fixed inset-0 z-50 bg-slate-950/95 flex items-center justify-center p-6">
+          <Card className="max-w-md text-center">
+            <Ico name="power" size={28} className="text-brand mx-auto" />
+            <h2 className="mt-3 text-lg font-semibold text-slate-100">{t('quit.stopped_title')}</h2>
+            <p className="mt-2 text-sm text-slate-300">{t('quit.stopped_text')}</p>
+          </Card>
+        </div>
+      )}
 
       <div className="flex flex-1 overflow-hidden">
         {/* LEFT: step 1 + step 2 */}
         <aside className="w-[420px] shrink-0 border-r border-slate-800 overflow-y-auto log-scroll bg-slate-950/40">
           <div className="p-4 space-y-4">
-            {handoff && <Card>
-              <h2 className="font-semibold text-slate-100">{t('handoff.title')}</h2>
-              {handoff.invalid ? <p className="text-sm text-amber-300 mt-2">{t('handoff.invalid')}</p> : <>
-                <p className="text-sm text-slate-300 mt-2">{t('handoff.review')}</p>
-                <p className="text-sm text-slate-100 break-all mt-2">{handoff.site}</p>
-                {handoff.url && <p className="text-xs text-slate-400 break-all mt-2">{handoff.url}</p>}
-                <p className="text-xs text-slate-400 mt-2">{t('handoff.confirm')}</p>
-                <Btn onClick={acceptHandoff} className="mt-3">{t('handoff.use')}</Btn>
-              </>}
-              <Btn variant="link" onClick={() => setHandoff(null)}>{t('handoff.dismiss')}</Btn>
-            </Card>}
             <Card>
               <StepTitle n={1} title={t('step1.title')} done={connected} />
               <SitePanel sites={sites} activeKey={activeKey} conn={conn} form={form} setForm={setForm}
@@ -1248,6 +1320,7 @@ function Main({ prefs, setPref }) {
                 onNew={() => { setForm({ url: '', user: '', password: '', sslVerify: true }); setConn(c => (c.state === 'ok' ? c : { state: 'none' })); }}
                 onDisconnect={disconnect} onSwitch={() => setEditing(true)}
                 onCancelEdit={() => setEditing(false)} />
+              {handoff && handoff.invalid && <p className="mt-2 text-xs text-amber-300">{t('handoff.invalid')}</p>}
             </Card>
 
             <Card className={cls(!connected && 'opacity-60')}>

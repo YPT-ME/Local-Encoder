@@ -21,7 +21,7 @@ The browser may ask the user to allow opening the application.
 
 The page probes only loopback ports 47800–47809 using a read-only iframe/message handshake.
 Replies must match the exact frame, origin, protocol version and random correlation value.
-No accounts, credentials, saved sites, jobs or local file paths are exposed. API CORS and the
+Discovery exposes no accounts, credentials, saved sites, jobs or local file paths. API CORS and the
 existing request-header and local-host protections remain unchanged. Chrome and other browsers
 may block local requests or ask for local-network permission; detection is optional.
 
@@ -34,9 +34,48 @@ are directed to use a Windows, macOS or Linux computer.
 
 The native URI accepts only `site` (an HTTP(S) base URL) and optional `url` (an HTTP(S) media URL).
 Credentials, local paths, other schemes, duplicate/unknown parameters and oversized links are
-rejected. The control page receives these values in a URL fragment, removes the fragment from
-its history entry and asks the user to confirm the destination. It does not import or upload
-automatically, and it never sends a saved account to a different site.
+rejected. The control page receives these values in a URL fragment and removes the fragment from
+its history entry. Without browser authorization it fills the normal site and video fields;
+the user signs in there. With authorization it connects the account that authorized the launch.
+There is no separate opening/confirmation card. It does not import or
+upload automatically, and it never sends a saved account to a different site.
+
+The control page is served without HTML caching, and its translation and handoff scripts use
+content-based revision URLs. This prevents a browser from mixing UI code and translations from
+different installed versions at the same loopback address.
+
+## Automatic sign-in
+
+Opening from an authenticated AVideo uploader session can sign in without retyping a password.
+The Web Encoder uses its own launch page and current Streamer credentials, so this also works
+when the browser has no session on the Streamer. Its page reuses the Streamer's launcher asset,
+following the Encoder's existing asset-loading pattern. Both server components and the app must
+be updated; missing support, expired authorization or blocked discovery falls back to manual login.
+
+For each discovery correlation, the application derives a secret verifier in memory and exposes
+only its SHA-256 challenge. The page requests a 120-second, single-use grant through same-origin
+POST with the existing CSRF token. The Encoder forwards only its authenticated Streamer's
+credentials to that Streamer through a non-redirecting POST; it never sends them to the browser.
+AVideo requires either the browser CSRF token or credentials actually verified by its existing
+login flow, plus upload permission and the enabled Show Local Encoder setting.
+
+The grant is bound to that proof key, user and password version. AVideo keeps its hash, challenge,
+user id and expiry in an installation-specific private temporary directory (no password or reusable
+access token). Redemption locks and empties the record atomically, then returns the existing
+revocable AVideo login token directly to the application's HTTP client. Password changes and
+inactive accounts invalidate outstanding grants. Deployments with multiple PHP hosts need shared
+temporary storage or session affinity for this short-lived exchange.
+
+The website sends the grant only by `postMessage` to its exact discovery iframe. The bridge
+requires its original parent, origin and correlation before accepting the authorization message,
+then POSTs it to the local API with the normal custom header. It acknowledges success only;
+it never returns the account, access token or local session id to the website. The control page
+claims the result through its same-origin API within 60 seconds. Only the public correlation
+travels in its fragment, which is removed immediately; the code, password, verifier and session
+id never enter navigation/native URLs. Queued jobs keep their original accounts.
+
+The proof-key construction follows [RFC 7636, S256](https://www.rfc-editor.org/rfc/rfc7636.html).
+There is no new general CORS permission, generic bridge proxy, automatic download or automatic job.
 
 A per-user OS file lock serializes process startup. The ready server records its loopback
 address and random instance identity atomically in the application data directory; another

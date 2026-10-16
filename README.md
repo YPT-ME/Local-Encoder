@@ -48,7 +48,7 @@ Hourly observations are stored in the repository's [`download-stats` branch](htt
 
 Your browser opens the Local Encoder page automatically. This page controls the program running on your computer. If the browser does not open, go to `http://127.0.0.1:47800`.
 
-On **Windows** no program window opens: Local Encoder lives in the **icon near the clock** (it may be inside the **^** arrow). Click the icon to open the page again; right-click it and choose **Quit** to stop the program. Double-clicking **LocalEncoder.exe** again also just reopens the page. On macOS the icon is in the menu bar.
+On **Windows** no program window opens: Local Encoder lives in the **icon near the clock** (it may be inside the **^** arrow). Click the icon to open the page again; right-click it and choose **Quit** to stop the program, or use **Stop Local Encoder** at the top of the page. Closing the page also stops Local Encoder when no video is being processed (your browser asks first); videos still in the queue keep going after the page is closed. Double-clicking **LocalEncoder.exe** again also just reopens the page. On macOS the icon is in the menu bar.
 
 The page is in English, Portuguese and Spanish: choose the language at the top.
 
@@ -56,8 +56,10 @@ The page is in English, Portuguese and Spanish: choose the language at the top.
 
 After opening a current ready-to-use package once, **Open Local Encoder** on an updated AVideo
 site or Web Encoder can launch the program, including when it is closed. Accept the browser's
-opening prompt if shown. The app asks you to check the site and video before filling the form;
-nothing is added to the queue automatically.
+opening prompt if shown. With current versions of all components, your signed-in account connects
+automatically. Review the displayed site, account and video before adding it to the queue;
+nothing is added automatically. Older sites/apps or a blocked browser check keep manual sign-in
+available.
 
 If the program is already running, the AVideo page can detect it and open its control page.
 A browser that blocks the check does not mean the program is missing: **Open Local Encoder**,

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import queue
+import re
 import threading
 import time
 import zipfile
@@ -82,6 +83,8 @@ def _isolated_state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setattr("local_encoder.server._info_cache", {})
     monkeypatch.setattr("local_encoder.server._work_queue", queue.Queue())
     monkeypatch.setattr("local_encoder.server._notifier", None)
+    monkeypatch.setattr("local_encoder.server._quit_handler", None)
+    monkeypatch.setattr("local_encoder.server._open_pages", {})
     monkeypatch.setattr("local_encoder.history._HISTORY_FILE", tmp_path / "history.jsonl")
     monkeypatch.setattr("local_encoder.settings._SETTINGS_FILE", tmp_path / "settings.json")
     return out
@@ -131,6 +134,33 @@ def test_index_returns_html() -> None:
     assert resp.status_code == 200
     assert "text/html" in resp.headers["content-type"]
     assert "/static/i18n.js" in resp.text
+
+
+@pytest.mark.parametrize("asset_name", ["i18n.js", "desktop.js"])
+def test_ui_asset_urls_change_with_contents_even_when_file_metadata_is_unchanged(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, asset_name: str
+) -> None:
+    (tmp_path / "index.html").write_text(
+        '<script src="/static/i18n.js"></script><script src="/static/desktop.js"></script>'
+        '<script src="/static/vendor/react.development.js"></script>',
+        encoding="utf-8",
+    )
+    for name in ("i18n.js", "desktop.js"):
+        (tmp_path / name).write_text("old", encoding="utf-8")
+    monkeypatch.setattr(server, "STATIC_DIR", tmp_path)
+    first = client.get("/")
+    pattern = rf'src="(/static/{re.escape(asset_name)}\?[^\"]+)"'
+    first_url = re.search(pattern, first.text)
+    assert first_url, "A new app version must not reuse the old unversioned asset URL"
+    assert first.headers["cache-control"] == "no-store"
+    asset = tmp_path / asset_name
+    previous = asset.stat()
+    asset.write_text("new", encoding="utf-8")
+    os.utime(asset, ns=(previous.st_atime_ns, previous.st_mtime_ns))
+    second = client.get("/")
+    second_url = re.search(pattern, second.text)
+    assert second_url and second_url[1] != first_url[1]
+    assert '/static/vendor/react.development.js"' in second.text
 
 
 # ---------------------------------------------------------------------------
@@ -1051,3 +1081,59 @@ def test_settings_round_trip() -> None:
 def test_settings_cannot_be_changed_by_another_site() -> None:
     plain = TestClient(app, base_url="http://127.0.0.1:47800")
     assert plain.post("/api/settings", json={"format": "mp4"}).status_code == 403
+
+
+# ---------------------------------------------------------------------------
+# Stopping Local Encoder from the page
+# ---------------------------------------------------------------------------
+
+
+def _quit_recorder(monkeypatch: pytest.MonkeyPatch) -> threading.Event:
+    called = threading.Event()
+    monkeypatch.setattr(server, "_quit_handler", called.set)
+    monkeypatch.setattr(server, "PAGE_CLOSED_GRACE_SECONDS", 0.05)
+    return called
+
+
+def test_stop_is_offered_only_when_serve_can_quit(monkeypatch: pytest.MonkeyPatch) -> None:
+    assert client.get("/api/version").json()["can_quit"] is False
+    assert client.post("/api/quit").json() == {"ok": False}
+    called = _quit_recorder(monkeypatch)
+    assert client.get("/api/version").json()["can_quit"] is True
+    assert client.post("/api/quit").json() == {"ok": True}
+    assert called.wait(2)
+
+
+def test_stop_needs_the_page_header(monkeypatch: pytest.MonkeyPatch) -> None:
+    called = _quit_recorder(monkeypatch)
+    plain = TestClient(app, base_url="http://127.0.0.1:47800")
+    assert plain.post("/api/quit").status_code == 403
+    assert plain.post("/api/page-closed", json={"page": "a"}).status_code == 403
+    assert not called.wait(0.5)
+
+
+def test_closing_the_last_idle_page_stops_local_encoder(monkeypatch: pytest.MonkeyPatch) -> None:
+    called = _quit_recorder(monkeypatch)
+    server._open_pages["a"] = 1
+    assert client.post("/api/page-closed", json={"page": "a"}).json() == {"ok": True}
+    assert called.wait(2)
+
+
+def test_closing_a_page_keeps_running_with_another_page_or_a_video(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    called = _quit_recorder(monkeypatch)
+    server._open_pages.update({"a": 1, "b": 1})  # another tab, or the same page reloaded
+    client.post("/api/page-closed", json={"page": "a"})
+    assert not called.wait(0.5)
+    server._open_pages.clear()
+    _job()  # a video still waiting to be processed
+    client.post("/api/page-closed", json={"page": "b"})
+    assert not called.wait(0.5)
+
+
+def test_quitting_ends_open_progress_streams() -> None:
+    subscriber = server._subscribe()
+    subscriber.get_nowait()  # the first message: every job's state
+    server.close_event_streams()
+    assert subscriber.get_nowait() is None  # the stream ends instead of waiting for keepalive

@@ -44,10 +44,14 @@ some of which may be misconfigured or hostile.
   `X-Local-Encoder: 1` header (a cross-site form cannot send it without a CORS preflight, which
   this server never answers). The page's `api()` helper and file uploads send it; keep it on new
   endpoints. GET endpoints must not change state.
-- `/bridge` is a read-only iframe discovery page. It returns only protocol/presence information,
-  matching the parent, origin and correlation value. Never expose sessions, saved sites, jobs or
-  files through it, or add general API CORS for discovery. URI handoffs accept only a site base
-  URL and optional HTTP(S) media URL; the UI asks the user to confirm before using them.
+- `/bridge` discovery returns only presence and a public, per-correlation S256 challenge. Its
+  separate authorization message requires the original parent, origin and correlation and accepts
+  only a short-lived proof-key-bound code, site and state. It POSTs that code through the normal
+  custom-header API and acknowledges success only. Never expose sessions, accounts, saved sites,
+  reusable credentials, jobs or files to its parent, or add general API CORS/a generic bridge proxy.
+  Codes and credentials must stay out of navigation/native URLs. The local page may claim an
+  authorized connection using public correlation; media submission always requires user action.
+  URI handoffs still accept only a site base URL and optional HTTP(S) media URL.
 - “Report a problem” zips the logs through `server.redact()` (passwords, `_user_hash_` tokens,
   `video_id_hash`); extend the patterns when a new secret could reach the log.
 - Uploaded files from the browser: write only inside the job work directory with a generated name
