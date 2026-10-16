@@ -1,0 +1,75 @@
+name: Download statistics
+
+on:
+  schedule:
+    - cron: "23 * * * *" # hourly, at minute 23 (UTC)
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: download-stats
+  cancel-in-progress: false
+
+jobs:
+  collect:
+    if: github.repository == 'YPT-ME/Local-Encoder'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Read all published release counters
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh api --paginate --slurp \
+            "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+            > "$RUNNER_TEMP/releases.json"
+
+      - name: Open or create the statistics branch
+        run: |
+          set -euo pipefail
+          stats_dir="$RUNNER_TEMP/download-stats"
+          if git ls-remote --exit-code --heads origin refs/heads/download-stats > /dev/null; then
+            git fetch --no-tags origin refs/heads/download-stats
+            git worktree add --detach "$stats_dir" FETCH_HEAD
+          else
+            status=$?
+            if [[ "$status" != 2 ]]; then
+              exit "$status"
+            fi
+            git worktree add --detach "$stats_dir" HEAD
+            git -C "$stats_dir" switch --orphan download-stats
+          fi
+
+      - name: Save the observation
+        run: |
+          set -euo pipefail
+          python scripts/collect_download_stats.py \
+            --repository "$GITHUB_REPOSITORY" \
+            --releases "$RUNNER_TEMP/releases.json" \
+            --output "$RUNNER_TEMP/download-stats"
+          cat "$RUNNER_TEMP/download-stats/README.md" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Commit statistics
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/download-stats"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- README.md latest.json snapshots
+          if ! git diff --cached --quiet; then
+            git commit -m "chore(stats): record release download counters"
+            git push origin HEAD:refs/heads/download-stats
+          fi

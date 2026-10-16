@@ -36,6 +36,8 @@ All versions, checksums and release notes: [Releases](https://github.com/YPT-ME/
 
 The **total downloads** badge sums downloads across all releases; **latest release downloads** counts only the newest release and switches automatically when a new version is published. Both use [Shields.io](https://shields.io/badges/git-hub-downloads-all-assets-all-releases) to read each release asset's `download_count` from [GitHub's public API](https://api.github.com/repos/YPT-ME/Local-Encoder/releases?per_page=100), with automatic, cached updates. They include program packages, checksums and attached source archives. Repeat downloads and updates count again, so these measure file downloads rather than unique users or installations.
 
+Hourly observations are stored in the repository's [`download-stats` branch](https://github.com/YPT-ME/Local-Encoder/tree/download-stats), with UTC timestamps and counts per version and file. This history starts with the first collector run; it cannot recover the dates of earlier downloads. See [how collection works](docs/download-statistics.md).
+
 ### 1. Extract the download and open the program
 
 - **Windows:** right-click the downloaded `.zip` file, choose **Extract All**, and open the extracted folder. Double-click **LocalEncoder.exe** (it may appear as **LocalEncoder** if file extensions are hidden).
