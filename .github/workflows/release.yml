@@ -55,6 +55,7 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
       ref: ${{ steps.version.outputs.ref }}
+      previous: ${{ steps.version.outputs.previous }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -98,6 +99,7 @@ jobs:
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "ref=${INPUT_REF:-$GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+          echo "previous=$latest" >> "$GITHUB_OUTPUT"
           echo "::notice title=Version v$version::$how"
           {
             echo "### Releasing v$version"
@@ -202,12 +204,14 @@ jobs:
     env:
       VERSION: ${{ needs.version.outputs.version }}
       REF: ${{ needs.version.outputs.ref }}
+      PREVIOUS: ${{ needs.version.outputs.previous }}
       REASON: ${{ inputs.reason }}
       GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.version.outputs.ref }}
+          fetch-depth: 0 # the changelog needs the history and the previous release tag
           persist-credentials: false
 
       - uses: actions/download-artifact@v4
@@ -239,6 +243,44 @@ jobs:
       - name: Checksums
         run: cd assets && sha256sum * > SHA256SUMS.txt && cat SHA256SUMS.txt
 
+      # Commits since the previous release, grouped by Conventional Commit type (feat/fix/other).
+      - name: Changelog
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os, pathlib, re, subprocess
+          prev, ref = os.environ["PREVIOUS"], os.environ["REF"]
+          out = pathlib.Path("changelog.md")
+          known = prev and subprocess.run(
+              ["git", "rev-parse", "-q", "--verify", f"refs/tags/{prev}"], capture_output=True
+          ).returncode == 0
+          if not known:
+              print(f"No previous release tag ('{prev}'): no changelog")
+              out.write_text("")
+              raise SystemExit
+          log = subprocess.run(
+              ["git", "log", "--no-merges", "--format=%h %s", f"{prev}..{ref}"],
+              check=True, capture_output=True, text=True,
+          ).stdout.splitlines()
+          titles = {"feat": "New features", "fix": "Fixes", "": "Other changes"}
+          groups = {title: [] for title in titles.values()}
+          for line in log:
+              sha, _, subject = line.partition(" ")
+              m = re.match(r"(feat|fix)(\([^)]*\))?!?:\s*(.+)", subject, re.IGNORECASE)
+              kind, text = (m.group(1).lower(), m.group(3)) if m else ("", subject)
+              groups[titles[kind]].append(f"- {text[:1].upper()}{text[1:]} ({sha})")
+          lines = ["## What's changed", ""]
+          for title, items in groups.items():
+              if items:
+                  lines += [f"### {title}", "", *items, ""]
+          if not log:
+              lines += ["No code changes since the previous release.", ""]
+          repo, version = os.environ["GITHUB_REPOSITORY"], os.environ["VERSION"]
+          lines += [f"**Full changelog:** https://github.com/{repo}/compare/{prev}...v{version}", ""]
+          out.write_text("\n".join(lines))
+          print(out.read_text())
+          PY
+
       - name: Release notes
         run: |
           set -euo pipefail
@@ -258,6 +300,7 @@ jobs:
             echo "Unzip and open **LocalEncoder**. The first time, Windows and macOS warn that the app is not signed yet; see README.txt inside the download."
             echo
             if [[ -n "${REASON:-}" ]]; then echo "**Why this release:** $REASON"; echo; fi
+            cat changelog.md
             echo "## Included"
             echo
             echo "- yt-dlp $ytdlp"

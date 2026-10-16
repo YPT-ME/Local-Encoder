@@ -57,7 +57,9 @@ Windows on ARM runs the x64 build through emulation, so it has no separate asset
       download is never shipped.
 4. **publish**:
    1. downloads the FFmpeg source code for every bundled FFmpeg build;
-   2. writes `SHA256SUMS.txt` and the release notes;
+   2. writes `SHA256SUMS.txt` and the release notes, including a changelog of the commits since
+      the previous release (`feat:` → New features, `fix:` → Fixes, everything else → Other
+      changes; merge commits are skipped);
    3. creates the GitHub release and its tag.
 
 Ways to start it:
