@@ -681,7 +681,8 @@ def _pick_port(host: str, port: int) -> int:
     """Return *port* when it is free, otherwise any free port chosen by the OS."""
     import socket
 
-    for candidate in (port, 0):
+    candidates = (*range(port, port + 10), 0) if port == DEFAULT_PORT else (port, 0)
+    for candidate in candidates:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
             try:
                 sock.bind((host, candidate))
@@ -713,7 +714,15 @@ def _running_instance_url(host: str, port: int) -> str | None:
         data = response.json()
     except (httpx.HTTPError, ValueError):
         return None
-    if response.status_code == 200 and isinstance(data, dict) and "version" in data:
+    if (
+        response.status_code == 200
+        and isinstance(data, dict)
+        and "version" in data
+        and (
+            data.get("application") == "avideo-local-encoder"
+            or data.get("download_url") == "https://github.com/YPT-ME/Local-Encoder/releases/latest"
+        )
+    ):
         return url
     return None
 
@@ -726,19 +735,71 @@ def serve(
     no_tray: bool = typer.Option(
         False, "--no-tray", help="Do not show the icon near the clock; stop with Ctrl+C"
     ),
+    open_url: str = typer.Option("", "--open-url", hidden=True),
 ) -> None:
     """Start the web UI (FastAPI + uvicorn)."""
+    import webbrowser
+
+    from local_encoder import desktop
+
+    try:
+        request = desktop.parse_link(open_url) if open_url else None
+        with desktop.StartupLock() as guard:
+            existing = desktop.running_url()
+            if existing and (
+                request
+                or (host == "127.0.0.1" and port == DEFAULT_PORT)
+                or existing == _local_url(host, port)
+            ):
+                if not no_browser:
+                    webbrowser.open(desktop.page_url(existing, request))
+                return
+            desktop.startup_guard = guard
+            try:
+                _serve(host, port, no_browser, no_tray, request)
+            finally:
+                desktop.startup_guard = None
+    except (ValueError, TimeoutError) as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(1) from None
+
+
+@app.command("open-url", hidden=True)
+def open_from_browser(url: str) -> None:
+    """Open a validated browser link; never start a video automatically."""
+    serve("127.0.0.1", DEFAULT_PORT, False, False, url)
+
+
+@app.command("register-browser")
+def register_browser() -> None:
+    """Enable AVideo's Open Local Encoder button for this computer user."""
+    from local_encoder import desktop
+
+    if not desktop.register_handler(explicit=True):
+        console.print(
+            "[red]Browser opening could not be enabled. Open Local Encoder manually.[/red]"
+        )
+        raise typer.Exit(1)
+    console.print("Browser opening is enabled for this user.")
+
+
+def _serve(
+    host: str, port: int, no_browser: bool, no_tray: bool, request: dict[str, str] | None = None
+) -> None:
     import signal
     import threading
     import webbrowser
 
+    from local_encoder import desktop
+
+    desktop.register_handler()
     actual_port = _pick_port(host, port)
     if actual_port != port:
         existing = _running_instance_url(host, port)
-        if existing:
+        if existing and (not request or desktop.supports_handoff(existing)):
             console.print(f"Local Encoder is already running at {existing}")
             if not no_browser:
-                webbrowser.open(existing)
+                webbrowser.open(desktop.page_url(existing, request))
             raise typer.Exit(0)
         console.print(f"[yellow]Port {port} is busy; using {actual_port} instead.[/yellow]")
 
@@ -747,7 +808,9 @@ def serve(
     from local_encoder import tray
     from local_encoder.server import app as fastapi_app
 
-    url = _local_url(host, actual_port)
+    base_url = _local_url(host, actual_port)
+    desktop.runtime_url = base_url
+    url = desktop.page_url(base_url, request)
     uv_server = uvicorn.Server(
         uvicorn.Config(
             fastapi_app,

@@ -1,0 +1,12 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="referrer" content="no-referrer"><title>Local Encoder discovery</title></head>
+<body><script>
+'use strict';
+// Read-only discovery. Never return sessions, sites, files or job information.
+window.addEventListener('message', function (event) {
+  if (window.parent === window || event.source !== window.parent || !/^https?:\/\//.test(event.origin)) return;
+  var data = event.data;
+  if (!data || data.type !== 'avideo-local-encoder:discover' || typeof data.nonce !== 'string' || !/^[a-f0-9]{32}$/.test(data.nonce)) return;
+  event.source.postMessage({ type: 'avideo-local-encoder:ready', nonce: data.nonce, protocol: 1 }, event.origin);
+});
+</script></body></html>

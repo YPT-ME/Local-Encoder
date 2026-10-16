@@ -23,6 +23,7 @@ applyTo: "**/*.py"
 | `local_encoder/config.py` | `.env`/environment configuration (`Config`, `load_config`, `default_work_dir`). |
 | `local_encoder/_frozen.py` | PyInstaller bundle detection and bundled `ffmpeg`/`ffprobe` resolution (next to the executable, or embedded on macOS). |
 | `local_encoder/updates.py` | Checks GitHub Releases for a newer version (packaged app only). |
+| `local_encoder/desktop.py` | Validates browser handoffs, registers the per-user URI handler, serializes startup and verifies a running instance. A handoff only prepares the UI; it never submits a job. |
 | `local_encoder/history.py` | JSON-lines job history in `~/.local/share/local-encoder/history.jsonl` (CLI and web UI jobs; `sent_items()` tells which links/files were already sent to a site). |
 | `local_encoder/logging_setup.py` | Rotating log file in `~/.local/share/local-encoder/local-encoder.log`. |
 | `local_encoder/progress.py` | Rich progress bars for the CLI. |

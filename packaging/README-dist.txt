@@ -43,6 +43,16 @@ While videos are being processed, Local Encoder keeps the computer from going to
 If you choose "Quit" while videos are still being processed, Local Encoder asks you to
 choose "Quit" again to confirm.
 
+OPEN FROM AVIDEO
+----------------
+
+Opening this package once enables the "Open Local Encoder" button on updated AVideo sites
+and Web Encoders for your computer user. Accept the browser prompt if it appears. The
+program shows the site and video for you to check; nothing is imported automatically.
+Keep the package files together. If you move or update the program, open the new copy
+once to refresh browser opening. If the browser cannot detect it, open the program
+manually and use "Check again" on the AVideo page. The download option remains available.
+
 USING IT
 --------
 

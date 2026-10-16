@@ -34,7 +34,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingRes
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from local_encoder import __version__, folders, history, keep_awake, settings, updates
+from local_encoder import __version__, desktop, folders, history, keep_awake, settings, updates
 from local_encoder.avideo_client import (
     AVideoClient,
     LoginResult,
@@ -72,9 +72,10 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
-    yield
-    # Quitting Local Encoder: stop the running FFmpeg instead of leaving it behind.
-    stop_running_jobs()
+    with desktop.advertise():
+        yield
+        # Quitting Local Encoder: stop the running FFmpeg instead of leaving it behind.
+        stop_running_jobs()
 
 
 app = FastAPI(title="AVideo Local Encoder", version=__version__, lifespan=_lifespan)
@@ -951,6 +952,20 @@ def logout(req: SessionRequest) -> dict[str, Any]:
 # Version / system
 # ---------------------------------------------------------------------------
 
+
+@app.get("/api/desktop")
+def desktop_info() -> dict[str, Any]:
+    return {"app": desktop.APP_ID, "protocol": 1, "instance": desktop.INSTANCE_ID}
+
+
+@app.get("/bridge", response_class=HTMLResponse)
+def desktop_bridge() -> HTMLResponse:
+    return HTMLResponse(
+        (STATIC_DIR / "bridge.html").read_text(encoding="utf-8"),
+        headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"},
+    )
+
+
 UPDATE_CHECK_SECONDS = 6 * 3600
 _update_cache: dict[str, Any] = {}
 
@@ -959,6 +974,7 @@ _update_cache: dict[str, Any] = {}
 def version_info() -> dict[str, Any]:
     """Current version and, for the packaged app, whether a newer release exists."""
     result: dict[str, Any] = {
+        "application": desktop.APP_ID,
         "version": __version__,
         "update_available": False,
         "latest": None,

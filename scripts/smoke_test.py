@@ -20,6 +20,7 @@ Standard library only.
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import sys
 import tarfile
@@ -128,6 +129,13 @@ def main() -> None:
         if version and version not in out:
             fail(f"--version printed {out.strip()!r}, expected {version}")
 
+        # Release runners are disposable: verify the actual OS registration tools too.
+        if os.environ.get("CI") == "true":
+            if not platform.startswith("linux") or shutil.which("xdg-mime"):
+                run([str(app), "register-browser"], timeout=90)
+            else:
+                print("::warning::Browser registration needs xdg-mime on a Linux desktop.")
+
         # 2. Everything the app needs, from the package itself
         cmd = [str(app), "selftest", "--require-bundled"]
         for url in downloads:
@@ -150,7 +158,14 @@ def main() -> None:
                 fail("the web page did not start")
             if version and f'"version":"{version}"' not in answer:
                 fail(f"/api/version answered {answer}")
-            for path in ("/", "/static/i18n.js", "/static/vendor/react.development.js"):
+            for path in (
+                "/",
+                "/static/i18n.js",
+                "/static/desktop.js",
+                "/bridge",
+                "/api/desktop",
+                "/static/vendor/react.development.js",
+            ):
                 if http(base + path) != 200:
                     fail(f"{path} did not load")
             refused = http(

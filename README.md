@@ -52,6 +52,19 @@ On **Windows** no program window opens: Local Encoder lives in the **icon near t
 
 The page is in English, Portuguese and Spanish: choose the language at the top.
 
+### Open it from AVideo
+
+After opening a current ready-to-use package once, **Open Local Encoder** on an updated AVideo
+site or Web Encoder can launch the program, including when it is closed. Accept the browser's
+opening prompt if shown. The app asks you to check the site and video before filling the form;
+nothing is added to the queue automatically.
+
+If the program is already running, the AVideo page can detect it and open its control page.
+A browser that blocks the check does not mean the program is missing: **Open Local Encoder**,
+**Check again** and **Download Local Encoder** remain available. Keep the extracted package in
+its folder; after moving or updating it, open the new copy once to refresh browser opening.
+See [browser integration and troubleshooting](docs/browser-integration.md).
+
 The program is not digitally signed yet, so Windows or macOS may show a warning on the first start:
 
 - **Windows**: "Windows protected your PC" → click **More info** → **Run anyway**.

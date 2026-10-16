@@ -10,7 +10,7 @@ import pytest
 from pytest_httpx import HTTPXMock
 from typer.testing import CliRunner
 
-from local_encoder import cli, tray
+from local_encoder import cli, desktop, tray
 
 runner = CliRunner()
 
@@ -111,6 +111,15 @@ def test_second_start_respects_no_browser(
     assert env["opened"] == []
 
 
+def test_an_explicit_different_port_is_not_silently_ignored(
+    env: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(desktop, "running_url", lambda: "http://127.0.0.1:47800")
+    result = runner.invoke(cli.app, ["serve", "--port", "50123", "--no-browser"])
+    assert result.exit_code == 0, result.output
+    assert FakeServer.instances[0].config.kwargs["port"] == 50123
+
+
 def test_busy_port_used_by_another_program_picks_another(
     env: dict[str, Any], monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -122,13 +131,35 @@ def test_busy_port_used_by_another_program_picks_another(
     assert FakeServer.instances[0].config.kwargs["port"] == 50123
 
 
+def test_browser_handoff_is_not_lost_to_an_older_running_app(
+    env: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(cli, "_pick_port", lambda host, port: 50123)
+    monkeypatch.setattr(cli, "_running_instance_url", lambda host, port: "http://127.0.0.1:47800")
+    monkeypatch.setattr(desktop, "supports_handoff", lambda url: False)
+    result = runner.invoke(
+        cli.app, ["open-url", "avideo-local-encoder://open?site=https%3A%2F%2Fexample.test%2F"]
+    )
+    assert result.exit_code == 0, result.output
+    assert FakeServer.instances[0].config.kwargs["port"] == 50123
+    assert env["opened"][0].startswith("http://127.0.0.1:50123/#avideo=")
+
+
 def test_running_instance_url_checks_api_version(httpx_mock: HTTPXMock) -> None:
-    httpx_mock.add_response(url="http://127.0.0.1:47800/api/version", json={"version": "1.2.3"})
+    httpx_mock.add_response(
+        url="http://127.0.0.1:47800/api/version",
+        json={"version": "1.2.3", "application": "avideo-local-encoder"},
+    )
     assert cli._running_instance_url("127.0.0.1", 47800) == "http://127.0.0.1:47800"
 
 
 def test_running_instance_url_ignores_other_programs(httpx_mock: HTTPXMock) -> None:
     httpx_mock.add_response(url="http://127.0.0.1:47800/api/version", text="<html>hello</html>")
+    assert cli._running_instance_url("127.0.0.1", 47800) is None
+
+
+def test_running_instance_does_not_confuse_another_apps_version_api(httpx_mock: HTTPXMock) -> None:
+    httpx_mock.add_response(url="http://127.0.0.1:47800/api/version", json={"version": "1.2.3"})
     assert cli._running_instance_url("127.0.0.1", 47800) is None
 
 

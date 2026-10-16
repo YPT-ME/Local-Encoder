@@ -5,7 +5,66 @@ const test = require('node:test');
 const vm = require('node:vm');
 
 const html = fs.readFileSync(path.join(__dirname, '../local_encoder/static/index.html'), 'utf8');
+const handoff = require('../local_encoder/static/desktop.js');
+
+test('browser handoff preserves a provider URL and rejects credentials, local files and extra commands', () => {
+  const params = new URLSearchParams({ site: 'https://example.test/subsite', url: 'https://provider.test/watch?v=a&list=b#t=30' });
+  const link = 'avideo-local-encoder://open?' + params;
+  assert.deepEqual(handoff.parse(link), { site: 'https://example.test/subsite/', url: params.get('url') });
+  assert.deepEqual(handoff.fromFragment('#avideo=' + encodeURIComponent(link)), handoff.parse(link));
+  for (const extra of ['&pass=secret', '&site=https://other.test/']) assert.throws(() => handoff.parse(link + extra));
+  for (const url of ['file:///private/video.mp4', 'javascript:alert(1)', 'https://user:secret@provider.test/video']) {
+    params.set('url', url);
+    assert.throws(() => handoff.parse('avideo-local-encoder://open?' + params));
+  }
+  assert.equal(handoff.fromFragment('#avideo=%invalid').invalid, true);
+});
+
+test('an external site is not silently mapped to another saved account or submitted', () => {
+  const start = html.indexOf('  function acceptHandoff()');
+  const end = html.indexOf('  useEffect(', start);
+  const state = { form: null, connection: null, active: 'old', selected: null };
+  const context = {
+    handoff: { site: 'https://destination.test/', url: 'https://provider.test/watch?v=1' },
+    sites: [{ url: 'https://other.test/', username: 'admin', sessionId: 'other-session' }],
+    normUrl: url => url,
+    connectionGeneration: { current: 0 },
+    setConn: value => { state.connection = value; }, setCategories() {},
+    setForm: value => { state.form = value; }, setActiveKey: value => { state.active = value; },
+    setEditing() {}, setTab() {}, setVideoUrl: value => { state.video = value; },
+    selectSite: value => { state.selected = value; }, setHandoff() {},
+  };
+  vm.createContext(context);
+  vm.runInContext(html.slice(start, end) + '\nacceptHandoff();', context);
+  assert.equal(state.form.url, 'https://destination.test/');
+  assert.equal(state.form.password, '');
+  assert.equal(state.connection.state, 'none');
+  assert.equal(state.active, '');
+  assert.equal(state.selected, null);
+  assert.equal(state.video, 'https://provider.test/watch?v=1');
+});
 const uploadCode = html.slice(html.indexOf('  function sendFile('), html.indexOf('  async function report('));
+
+test('a delayed response from a previous site cannot replace the handoff destination', async () => {
+  const start = html.indexOf('  async function selectSite(s)');
+  const end = html.indexOf('  async function connect()', start);
+  const state = { applied: false, updates: 0 };
+  let resolve;
+  const context = {
+    connectionGeneration: { current: 0 }, siteKey: s => s.url,
+    setForm() {}, setActiveKey() {}, setConn() {}, setEditing() {},
+    api: () => new Promise(done => { resolve = done; }),
+    applyConnection() { state.applied = true; }, updateSite() { state.updates++; },
+  };
+  vm.createContext(context);
+  vm.runInContext(html.slice(start, end), context);
+  const pending = context.selectSite({ url: 'https://old.test/', username: 'admin', sessionId: 'old-session' });
+  context.connectionGeneration.current++; // accepting a different handoff invalidates this response
+  resolve({ ok: true, data: { ok: true } });
+  await pending;
+  assert.equal(state.applied, false);
+  assert.equal(state.updates, 0);
+});
 
 function harness(statuses) {
   const original = ['one.mp4', 'two.mp4', 'three.mp4'].map(name => ({ name, size: 10 }));

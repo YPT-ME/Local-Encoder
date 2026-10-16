@@ -25,6 +25,7 @@
 </head>
 <body class="text-slate-200 h-full">
 <div id="root"></div>
+<script src="/static/desktop.js"></script>
 <script type="text/babel">
 const { useState, useRef, useCallback, useEffect } = React;
 
@@ -750,8 +751,10 @@ function Main({ prefs, setPref }) {
   const activeKey = prefs.active_site;
   const setActiveKey = v => setPref('active_site', v);
   const [form, setForm] = useState({ url: '', user: '', password: '', sslVerify: true });
+  const [handoff, setHandoff] = useState(() => LocalEncoderHandoff.fromFragment(window.location.hash));
   const [showMore, setShowMore] = useState(false);
   const [conn, setConn] = useState({ state: 'none' });
+  const connectionGeneration = useRef(0);
   const [editing, setEditing] = useState(false);
   const [logoOk, setLogoOk] = useState(true);
   const [categories, setCategories] = useState([]);
@@ -822,14 +825,17 @@ function Main({ prefs, setPref }) {
   }
 
   async function selectSite(s) {
+    const generation = ++connectionGeneration.current;
     setForm({ url: s.url, user: s.username, password: '', sslVerify: s.sslVerify !== false });
     setActiveKey(siteKey(s));
     if (s.sessionId) {
       setConn({ state: 'connecting' });
       try {
         const r = await api('/api/session', { session_id: s.sessionId });
+        if (generation !== connectionGeneration.current) return;
         if (r.ok && r.data && r.data.ok) { applyConnection(r.data, { username: s.username, sslVerify: s.sslVerify !== false }); return; }
       } catch {}
+      if (generation !== connectionGeneration.current) return;
       updateSite(siteKey(s), { sessionId: '' });
     }
     setConn({ state: 'none', hintUser: s.username });
@@ -837,22 +843,26 @@ function Main({ prefs, setPref }) {
   }
 
   async function connect() {
+    const generation = ++connectionGeneration.current;
     const url = normUrl(form.url);
     const user = form.user.trim();
     setConn({ state: 'connecting' });
     try {
       const r = await api('/api/test-connection', { server_url: url, username: user, password: form.password, ssl_verify: form.sslVerify });
+      if (generation !== connectionGeneration.current) return;
       if (r.data && r.data.ok) {
         applyConnection(r.data, { username: user, sslVerify: form.sslVerify });
         setForm(f => ({ ...f, url, password: '' }));
       } else {
         setConn({ state: 'error', error: (r.data && r.data.error_info) || { code: 'unknown', params: { detail: (r.data && (r.data.error || r.data.detail)) || '' } } });
       }
-    } catch { setConn({ state: 'error', error: { code: 'connection' } }); }
+    } catch { if (generation === connectionGeneration.current) setConn({ state: 'error', error: { code: 'connection' } }); }
   }
 
   async function disconnect() {
+    const generation = ++connectionGeneration.current;
     if (conn.sessionId) { try { await api('/api/logout', { session_id: conn.sessionId }); } catch {} }
+    if (generation !== connectionGeneration.current) return;
     if (conn.key) updateSite(conn.key, { sessionId: '' });
     setForm(f => ({ ...f, password: '' }));
     setConn({ state: 'none' });
@@ -879,10 +889,37 @@ function Main({ prefs, setPref }) {
     setEditing(true);
   }
 
+  function acceptHandoff() {
+    if (!handoff || handoff.invalid) return;
+    ++connectionGeneration.current;
+    setConn({ state: 'none' });
+    setCategories([]);
+    setForm({ url: handoff.site, user: '', password: '', sslVerify: true });
+    setActiveKey('');
+    setEditing(true);
+    if (handoff.url) { setTab('link'); setVideoUrl(handoff.url); }
+    const matching = sites.filter(s => normUrl(s.url) === normUrl(handoff.site));
+    if (matching.length === 1) selectSite(matching[0]);
+    setHandoff(null);
+  }
+
+  useEffect(() => {
+    function readHandoff() {
+      const request = LocalEncoderHandoff.fromFragment(window.location.hash);
+      if (request) {
+        setHandoff(request);
+        window.history.replaceState(null, '', window.location.pathname + window.location.search);
+      }
+    }
+    readHandoff();
+    window.addEventListener('hashchange', readHandoff);
+    return () => window.removeEventListener('hashchange', readHandoff);
+  }, []);
+
   // Start: reconnect to the last site and follow the queue.
   useEffect(() => {
     const start = sites.find(s => siteKey(s) === activeKey) || sites[0];
-    if (start) selectSite(start); else setEditing(true);
+    if (start && !handoff) selectSite(start); else setEditing(true);
 
     fetch('/api/version').then(r => r.json()).then(setVersionInfo).catch(() => {});
 
@@ -1192,6 +1229,17 @@ function Main({ prefs, setPref }) {
         {/* LEFT: step 1 + step 2 */}
         <aside className="w-[420px] shrink-0 border-r border-slate-800 overflow-y-auto log-scroll bg-slate-950/40">
           <div className="p-4 space-y-4">
+            {handoff && <Card>
+              <h2 className="font-semibold text-slate-100">{t('handoff.title')}</h2>
+              {handoff.invalid ? <p className="text-sm text-amber-300 mt-2">{t('handoff.invalid')}</p> : <>
+                <p className="text-sm text-slate-300 mt-2">{t('handoff.review')}</p>
+                <p className="text-sm text-slate-100 break-all mt-2">{handoff.site}</p>
+                {handoff.url && <p className="text-xs text-slate-400 break-all mt-2">{handoff.url}</p>}
+                <p className="text-xs text-slate-400 mt-2">{t('handoff.confirm')}</p>
+                <Btn onClick={acceptHandoff} className="mt-3">{t('handoff.use')}</Btn>
+              </>}
+              <Btn variant="link" onClick={() => setHandoff(null)}>{t('handoff.dismiss')}</Btn>
+            </Card>}
             <Card>
               <StepTitle n={1} title={t('step1.title')} done={connected} />
               <SitePanel sites={sites} activeKey={activeKey} conn={conn} form={form} setForm={setForm}

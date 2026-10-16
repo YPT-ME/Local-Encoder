@@ -3,6 +3,12 @@
 // and notices from local_encoder/server.py (notice.<code>). {name} is replaced by a value.
 window.LE_I18N = {
   en: {
+    'handoff.title': 'Opened from AVideo',
+    'handoff.review': 'Check the site that will receive your videos:',
+    'handoff.confirm': 'This only fills in the form. Review your account and click Add to queue when you are ready.',
+    'handoff.use': 'Use this site and video',
+    'handoff.dismiss': 'Dismiss',
+    'handoff.invalid': 'This link is not valid. Open your AVideo site and try its Local Encoder button again.',
     'add.tab_folder': 'Folder',
     'folder.choose': 'Choose the folder with your videos',
     'folder.change': 'Change folder',
@@ -188,6 +194,12 @@ window.LE_I18N = {
   },
 
   pt: {
+    'handoff.title': 'Aberto pelo AVideo',
+    'handoff.review': 'Confira o site que receberá seus vídeos:',
+    'handoff.confirm': 'Isso apenas preenche o formulário. Confira sua conta e clique em Adicionar à fila quando estiver pronto.',
+    'handoff.use': 'Usar este site e vídeo',
+    'handoff.dismiss': 'Dispensar',
+    'handoff.invalid': 'Este link não é válido. Abra seu site AVideo e tente novamente pelo botão do Local Encoder.',
     'add.tab_folder': 'Pasta',
     'folder.choose': 'Escolha a pasta com os seus vídeos',
     'folder.change': 'Trocar pasta',
@@ -373,6 +385,12 @@ window.LE_I18N = {
   },
 
   es: {
+    'handoff.title': 'Abierto desde AVideo',
+    'handoff.review': 'Comprueba el sitio que recibirá tus videos:',
+    'handoff.confirm': 'Esto solo completa el formulario. Comprueba tu cuenta y pulsa Añadir a la cola cuando estés listo.',
+    'handoff.use': 'Usar este sitio y video',
+    'handoff.dismiss': 'Descartar',
+    'handoff.invalid': 'Este enlace no es válido. Abre tu sitio AVideo e inténtalo de nuevo con el botón de Local Encoder.',
     'add.tab_folder': 'Carpeta',
     'folder.choose': 'Elige la carpeta con tus videos',
     'folder.change': 'Cambiar carpeta',
