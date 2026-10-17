@@ -1,58 +1,63 @@
 # Download statistics
 
-The [Download statistics workflow](../.github/workflows/download-stats.yml) collects GitHub
-release asset counters hourly, at minute 23 UTC. It can also be started from **Actions → Download
-statistics → Run workflow**. GitHub may delay or skip scheduled runs; observations record their
-actual collection time.
+**[Open the live report →](https://github.com/YPT-ME/Local-Encoder/tree/download-stats)**
+Downloads by version, platform, UTC day and collection interval.
 
-## Storage
+[![All release asset downloads](https://img.shields.io/github/downloads/YPT-ME/Local-Encoder/total?style=flat-square&label=downloads)](https://github.com/YPT-ME/Local-Encoder/releases)
+[![Latest release downloads](https://img.shields.io/github/downloads/YPT-ME/Local-Encoder/latest/total?style=flat-square&label=latest%20release)](https://github.com/YPT-ME/Local-Encoder/releases/latest)
+[![Collector status](https://img.shields.io/github/actions/workflow/status/YPT-ME/Local-Encoder/download-stats.yml?branch=main&style=flat-square&label=collector)](https://github.com/YPT-ME/Local-Encoder/actions/workflows/download-stats.yml)
 
-The workflow creates an independent, data-only [`download-stats` branch](https://github.com/YPT-ME/Local-Encoder/tree/download-stats)
-in this repository on its first successful run. Each run commits:
+## Program downloads by platform
 
-- `latest.json`: the most recent observation, including totals and counts per release and asset.
-- `snapshots/YYYY-MM-DD.jsonl`: an append-only daily history, with one observation per line.
-- `README.md`: the report GitHub shows on the branch page. It has tables of program downloads per
-  version and platform, per UTC day, and for the most recent collection intervals with downloads.
+These badges count each named program package across releases.
 
-Observations contain UTC timestamps, release IDs/tags, asset IDs/names and cumulative download
-counts. `total_downloads` includes all attached assets; `program_downloads` includes only assets
-whose names start with `LocalEncoder-`. Published pre-releases are included; drafts are excluded.
-No downloader identities, IP addresses or application usage data are collected.
+| Platform | Downloads |
+| --- | --- |
+| Windows x64 | [![Windows downloads](https://img.shields.io/github/downloads/YPT-ME/Local-Encoder/LocalEncoder-windows-x64.zip.svg?style=flat-square&label=Windows&displayAssetName=false)](https://github.com/YPT-ME/Local-Encoder/releases) |
+| macOS Apple Silicon | [![macOS ARM64 downloads](https://img.shields.io/github/downloads/YPT-ME/Local-Encoder/LocalEncoder-macos-arm64.zip?style=flat-square&label=macOS%20ARM64&displayAssetName=false)](https://github.com/YPT-ME/Local-Encoder/releases) |
+| macOS Intel | [![macOS Intel downloads](https://img.shields.io/github/downloads/YPT-ME/Local-Encoder/LocalEncoder-macos-x64.zip?style=flat-square&label=macOS%20Intel&displayAssetName=false)](https://github.com/YPT-ME/Local-Encoder/releases) |
+| Linux x64 | [![Linux x64 downloads](https://img.shields.io/github/downloads/YPT-ME/Local-Encoder/LocalEncoder-linux-x64.tar.gz?style=flat-square&label=Linux%20x64&displayAssetName=false)](https://github.com/YPT-ME/Local-Encoder/releases) |
+| Linux ARM64 | [![Linux ARM64 downloads](https://img.shields.io/github/downloads/YPT-ME/Local-Encoder/LocalEncoder-linux-arm64.tar.gz.svg?style=flat-square&label=Linux%20ARM64)](https://github.com/YPT-ME/Local-Encoder/releases) |
 
-These files are committed to Git rather than retained only as temporary Actions artifacts.
-Earlier observations remain available if a release or asset is later deleted from GitHub.
-The statistics branch does not contain the application code, and the collector never force-pushes.
+## What the numbers mean
 
-## Reading the history
+- **All assets** (also the README badge): program packages, checksums and attached source archives.
+- **Program downloads:** only `LocalEncoder-*` packages.
+- **Downloads are not users:** updates and repeat downloads count again.
+- **Daily totals are observations:** increases are assigned to the UTC day of the later collection,
+  not the exact time of each download. The first collection includes older downloads.
+- **Badges and report may differ:** Shields caches API results; the report uses hourly snapshots.
+  Deleted assets disappear from current API totals but remain in recorded history.
 
-The branch's `README.md` already applies the rules below. Use the snapshots directly only for
-other breakdowns.
+Sources: [Shields download badges](https://shields.io/badges/git-hub-downloads-all-assets-all-releases)
+and [GitHub release assets API](https://docs.github.com/en/rest/releases/assets).
 
-The first observation is a **baseline**, including downloads that happened before collection
-started. To measure subsequent downloads over an interval, subtract an asset's earlier
-`download_count` from its later count, matching by asset ID. Group those differences by release
-or program package for per-version or per-platform reports.
+## Collection and data
 
-For example, 10 downloads at 13:23 UTC and 14 at 14:25 UTC means four additional downloads were
-observed between those collections. It does not identify the exact download times. A missed run
-produces a longer interval rather than a known hourly breakdown.
+The [workflow](../.github/workflows/download-stats.yml) runs hourly at minute 23 UTC.
+GitHub can delay or skip runs; every snapshot records its actual collection time.
+Published pre-releases are included; drafts are excluded. No downloader identities, IP addresses
+or app usage data are collected.
 
-Do not treat a newly seen asset's initial count as downloads during the last interval: some may
-have happened earlier. Do not treat deleted/replaced assets or lower counters as negative
-downloads. The GitHub API cannot reconstruct earlier download timestamps, and repeat downloads
-or updates are not unique users or installations.
+| File on the [`download-stats` branch](https://github.com/YPT-ME/Local-Encoder/tree/download-stats) | Contents |
+| --- | --- |
+| `README.md` | Generated report |
+| `latest.json` | Latest totals, release/asset IDs, names and counters |
+| `snapshots/YYYY-MM-DD.jsonl` | Append-only observations grouped by UTC day |
 
-## Enabling collection
+For custom analysis, compare counters for the **same asset ID**. A newly seen asset may include
+older downloads; lower counters or removed/replaced assets are never negative downloads.
+A missed run creates a longer measurement interval.
 
-Publish the workflow and collector script to the repository's default branch. The hourly
-schedule starts there; use **Run workflow** to capture the initial baseline immediately.
-The workflow uses the built-in `GITHUB_TOKEN` with `contents: write`; no extra secret or server
-is needed. Repository rules must allow that token to create and update `download-stats`.
+## Maintainer setup
 
-Concurrent collector runs are serialized. An API or Git failure stops the run instead of
-overwriting the remote history. In public repositories, GitHub disables schedules after 60 days
-without repository activity; check the Actions page if collection stops.
+Publish the workflow and collector to the default branch, then run
+**Actions → Download statistics → Run workflow** for the baseline.
+The built-in `GITHUB_TOKEN` needs `contents: write` and permission to create/update
+`download-stats`; no extra secret or server is needed.
 
-References: [GitHub release assets API](https://docs.github.com/en/rest/releases/assets),
-[scheduled workflow behavior](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#schedule).
+Runs are serialized; API or Git errors stop collection without overwriting remote history.
+The collector never force-pushes.
+If collection stops, check [Actions](https://github.com/YPT-ME/Local-Encoder/actions/workflows/download-stats.yml):
+GitHub may disable public-repository schedules after 60 days without activity.
+[Schedule behavior](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#schedule).

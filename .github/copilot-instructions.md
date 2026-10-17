@@ -78,7 +78,8 @@ work inside the executable, and must not depend on the current directory.
 | [local-encoder-user-experience.instructions.md](instructions/local-encoder-user-experience.instructions.md) | UI, CLI, server, progress, README, packaging — non-technical users |
 | [local-encoder-testing.instructions.md](instructions/local-encoder-testing.instructions.md) | `tests/**` and every "done" claim — checks, mocking, end-to-end on vlu.me |
 
-Reference docs: `docs/avideo-encoder-protocol.md` (endpoints/fields),
+Reference docs: `docs/user-guide.md` (end-user guide; `README.md` stays short),
+`docs/development.md` (source setup), `docs/avideo-encoder-protocol.md` (endpoints/fields),
 `docs/encoder-parity.md` (parity status + known defects) and `docs/releasing.md` (builds,
 releases, FFmpeg license). `GAPS.md`, if present locally, is an old
 untracked note — the `docs/` files supersede it.
@@ -133,7 +134,7 @@ Report real results; never claim a check passed without running it.
 
 - Commits: Conventional Commits (`feat:`, `fix:`, `refactor:`, `docs:`, `chore:`, `test:`).
 - Code, comments, commit messages and docs in English. Reply to the user in the language they use.
-- One PR = one feature or fix, with tests; update `README.md` for user-facing changes and
+- One PR = one feature or fix, with tests; update `docs/user-guide.md` (and `README.md` if it changes the basics) for user-facing changes and
   `docs/encoder-parity.md` when parity changes.
 
 ## Keep This Knowledge Current

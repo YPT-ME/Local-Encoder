@@ -1,46 +1,31 @@
-# Contributing to Local Encoder
+# Contributing
 
-Thanks for your interest in contributing!
+[Source setup and architecture](docs/development.md) · [Open an issue](https://github.com/YPT-ME/Local-Encoder/issues)
 
-## Getting started
+## Pull requests
 
-```bash
-git clone https://github.com/YPT-ME/Local-Encoder
-cd Local-Encoder
+1. Keep each PR focused on one feature or fix.
+2. Add or update tests for code changes.
+3. Update the [user guide](docs/user-guide.md) for user-facing changes, the README for basics,
+   and [encoder parity](docs/encoder-parity.md) when integration behavior changes.
+4. Run all four checks:
 
-python -m venv .venv
-source .venv/bin/activate   # Windows: .venv\Scripts\activate
+   ```bash
+   pytest
+   ruff check .
+   ruff format --check .
+   mypy local_encoder
+   ```
 
-pip install -e ".[dev]"
-```
+Encoding, login and upload changes also need a real AVideo integration test.
+Use [Conventional Commits](https://www.conventionalcommits.org/) such as `feat:`, `fix:` or `docs:`.
 
-## Running the checks
+## Bug reports
 
-```bash
-pytest                  # run tests
-ruff check .            # lint
-ruff format .           # format
-mypy local_encoder      # type-check
-```
-
-All four must pass before opening a pull request.
-
-## Pull request guidelines
-
-- Keep PRs focused — one feature or fix per PR.
-- Add or update tests for any code you change.
-- Update `README.md` if you change user-facing behaviour.
-- Use [Conventional Commits](https://www.conventionalcommits.org/) for commit messages
-  (`feat:`, `fix:`, `refactor:`, `docs:`, `chore:`).
-
-## Reporting bugs
-
-Open an issue and include:
-- Python version (`python --version`)
-- FFmpeg version (`ffmpeg -version`)
-- The full error message / traceback
-- Steps to reproduce
+Include the app version, operating system, steps to reproduce and the error shown.
+Use **Report a problem** in the app to attach logs. Never include passwords or access tokens.
+For source installations, also include Python and FFmpeg versions.
 
 ## License
 
-By contributing you agree your changes will be released under the [MIT License](LICENSE).
+Contributions are released under the [MIT License](LICENSE).
