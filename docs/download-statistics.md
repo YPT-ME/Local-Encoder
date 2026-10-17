@@ -12,7 +12,8 @@ in this repository on its first successful run. Each run commits:
 
 - `latest.json`: the most recent observation, including totals and counts per release and asset.
 - `snapshots/YYYY-MM-DD.jsonl`: an append-only daily history, with one observation per line.
-- `README.md`: a summary of the latest observation and an explanation of the files.
+- `README.md`: the report GitHub shows on the branch page. It has tables of program downloads per
+  version and platform, per UTC day, and for the most recent collection intervals with downloads.
 
 Observations contain UTC timestamps, release IDs/tags, asset IDs/names and cumulative download
 counts. `total_downloads` includes all attached assets; `program_downloads` includes only assets
@@ -24,6 +25,9 @@ Earlier observations remain available if a release or asset is later deleted fro
 The statistics branch does not contain the application code, and the collector never force-pushes.
 
 ## Reading the history
+
+The branch's `README.md` already applies the rules below. Use the snapshots directly only for
+other breakdowns.
 
 The first observation is a **baseline**, including downloads that happened before collection
 started. To measure subsequent downloads over an interval, subtract an asset's earlier
