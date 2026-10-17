@@ -79,6 +79,14 @@ Ways to start it:
 The first release must be started by hand (tag or button). The daily job only releases when a
 release already exists or yt-dlp changes.
 
+## Workflow maintenance
+
+The GitHub-maintained JavaScript actions use Node.js 24. CI and release orchestration jobs pin
+Ubuntu 24.04 while the `ubuntu-latest` migration to Ubuntu 26.04 is evaluated; Linux executable
+builds remain on Ubuntu 22.04 for glibc compatibility. Validate workflow changes with `actionlint`.
+The CI coverage upload targets only `.coverage` and enables `include-hidden-files`, because
+`upload-artifact` excludes dotfiles by default. A missing coverage file fails the upload step.
+
 ## Building locally
 
 ```bash

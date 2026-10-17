@@ -21,7 +21,7 @@ jobs:
   check:
     name: Check yt-dlp
     if: github.repository == 'YPT-ME/Local-Encoder'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
     outputs:
@@ -29,7 +29,7 @@ jobs:
       ref: ${{ steps.check.outputs.ref }}
       version: ${{ steps.check.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ github.event.repository.default_branch }}
 

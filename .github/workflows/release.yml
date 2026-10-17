@@ -51,13 +51,13 @@ concurrency:
 jobs:
   version:
     name: Decide version
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       version: ${{ steps.version.outputs.version }}
       ref: ${{ steps.version.outputs.ref }}
       previous: ${{ steps.version.outputs.previous }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.ref || github.sha }}
           persist-credentials: false
@@ -141,12 +141,12 @@ jobs:
       # YouTube often blocks datacenter IPs, so this one is only reported (linux-x64).
       SMOKE_YOUTUBE_URL: https://www.youtube.com/watch?v=jNQXAC9IVRw
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.version.outputs.ref }}
           persist-credentials: false
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 
@@ -186,7 +186,7 @@ jobs:
           SMOKE_TRY_DOWNLOAD_URLS: ${{ matrix.platform == 'linux-x64' && env.SMOKE_YOUTUBE_URL || '' }}
         run: python scripts/smoke_test.py "${{ matrix.platform }}"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: dist-${{ matrix.platform }}
           if-no-files-found: error
@@ -198,7 +198,7 @@ jobs:
   publish:
     name: Publish release
     needs: [version, build]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
     env:
@@ -208,13 +208,13 @@ jobs:
       REASON: ${{ inputs.reason }}
       GH_TOKEN: ${{ github.token }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.version.outputs.ref }}
           fetch-depth: 0 # the changelog needs the history and the previous release tag
           persist-credentials: false
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: dist-*
           merge-multiple: true
