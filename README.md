@@ -4,7 +4,7 @@ Automatic observations of GitHub release asset counters.
 
 | Latest observation (UTC) | All release assets | Program packages only |
 | --- | --- | --- |
-| 2026-10-16T22:08:03.515442Z | 17 | 17 |
+| 2026-10-17T00:35:17.938391Z | 17 | 17 |
 
 - `latest.json`: the most recent observation.
 - `snapshots/YYYY-MM-DD.jsonl`: one JSON observation per line, grouped by UTC day.
