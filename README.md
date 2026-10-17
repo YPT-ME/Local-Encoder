@@ -8,7 +8,7 @@
 
 [![CI](https://img.shields.io/github/actions/workflow/status/YPT-ME/Local-Encoder/ci.yml?branch=main&style=flat-square&label=CI)](https://github.com/YPT-ME/Local-Encoder/actions/workflows/ci.yml)
 [![Release build](https://img.shields.io/github/actions/workflow/status/YPT-ME/Local-Encoder/release.yml?style=flat-square&label=build)](https://github.com/YPT-ME/Local-Encoder/actions/workflows/release.yml)
-[![Last code commit](https://img.shields.io/github/last-commit/YPT-ME/Local-Encoder?style=flat-square)](https://github.com/YPT-ME/Local-Encoder/commits/main/)
+[![Last code commit](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fapi.github.com%2Frepos%2FYPT-ME%2FLocal-Encoder%2Fcommits%3Fsha%3Dmain%26per_page%3D1&query=%24%5B0%5D.commit.committer.date&style=flat-square&label=last%20commit&color=blue)](https://github.com/YPT-ME/Local-Encoder/commits/main/)
 [![License](https://img.shields.io/github/license/YPT-ME/Local-Encoder.svg?style=flat-square)](LICENSE)
 
 Local Encoder is a free, open-source desktop app for [AVideo](https://github.com/WWBN/AVideo),

@@ -3,7 +3,7 @@
 **[Open the live report →](https://github.com/YPT-ME/Local-Encoder/tree/download-stats)**
 Downloads by version, platform, UTC day and collection interval.
 
-[![All release asset downloads](https://img.shields.io/github/downloads/YPT-ME/Local-Encoder/total?style=flat-square&label=downloads)](https://github.com/YPT-ME/Local-Encoder/releases)
+[![All release asset downloads](https://img.shields.io/github/downloads/YPT-ME/Local-Encoder/total?style=flat-square&label=total%20downloads)](https://github.com/YPT-ME/Local-Encoder/releases)
 [![Latest release downloads](https://img.shields.io/github/downloads/YPT-ME/Local-Encoder/latest/total?style=flat-square&label=latest%20release)](https://github.com/YPT-ME/Local-Encoder/releases/latest)
 [![Collector status](https://img.shields.io/github/actions/workflow/status/YPT-ME/Local-Encoder/download-stats.yml?branch=main&style=flat-square&label=collector)](https://github.com/YPT-ME/Local-Encoder/actions/workflows/download-stats.yml)
 
@@ -28,6 +28,7 @@ These badges count each named program package across releases.
   not the exact time of each download. The first collection includes older downloads.
 - **Badges and report may differ:** Shields caches API results; the report uses hourly snapshots.
   Deleted assets disappear from current API totals but remain in recorded history.
+  GitHub also caches badge images, so a broken image on GitHub may differ from its source SVG.
 
 Sources: [Shields download badges](https://shields.io/badges/git-hub-downloads-all-assets-all-releases)
 and [GitHub release assets API](https://docs.github.com/en/rest/releases/assets).
