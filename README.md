@@ -4,7 +4,7 @@ Automatic observations of GitHub release asset counters, collected about hourly.
 
 | Latest observation (UTC) | All release assets | Program packages only |
 | --- | --- | --- |
-| 2026-10-20T17:19:37.051334Z | 23 | 23 |
+| 2026-10-20T20:42:26.346210Z | 23 | 23 |
 
 ## Program downloads per version and platform
 
