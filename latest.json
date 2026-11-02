@@ -1,9 +1,9 @@
 {
   "schema_version": 1,
   "repository": "YPT-ME/Local-Encoder",
-  "collected_at": "2026-11-02T17:13:18.202069Z",
-  "total_downloads": 47,
-  "program_downloads": 44,
+  "collected_at": "2026-11-02T23:55:28.321496Z",
+  "total_downloads": 48,
+  "program_downloads": 45,
   "releases": [
     {
       "id": 414043584,
@@ -353,7 +353,7 @@
       "tag_name": "v2.1.2",
       "published_at": "2026-10-27T12:20:58Z",
       "prerelease": false,
-      "download_count": 19,
+      "download_count": 20,
       "assets": [
         {
           "id": 681517650,
@@ -368,7 +368,7 @@
         {
           "id": 681517652,
           "name": "LocalEncoder-windows-x64.zip",
-          "download_count": 13
+          "download_count": 14
         },
         {
           "id": 681517653,
