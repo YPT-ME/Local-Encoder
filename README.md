@@ -4,7 +4,7 @@ Automatic observations of GitHub release asset counters, collected about hourly.
 
 | Latest observation (UTC) | All release assets | Program packages only |
 | --- | --- | --- |
-| 2026-11-03T06:58:40.938106Z | 48 | 45 |
+| 2026-11-03T15:19:30.059979Z | 49 | 46 |
 
 ## Program downloads per version and platform
 
@@ -12,7 +12,7 @@ Cumulative totals, including downloads before collection began.
 
 | Version | windows-x64 | macos-arm64 | macos-x64 | linux-x64 | linux-arm64 | Total |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| v2.1.2 | 14 | 2 | 0 | 1 | 0 | 17 |
+| v2.1.2 | 14 | 2 | 0 | 2 | 0 | 18 |
 | v2.1.1 | 2 | 0 | 0 | 1 | 0 | 3 |
 | v2.1.0 | 6 | 2 | 1 | 3 | 1 | 13 |
 | v2.0.0 | 4 | 0 | 0 | 0 | 0 | 4 |
@@ -20,7 +20,7 @@ Cumulative totals, including downloads before collection began.
 | v1.0.1 | 1 | 1 | 1 | 0 | 0 | 3 |
 | v1.0.0 | 2 | 0 | 0 | 0 | 0 | 2 |
 | v0.1.0 | 2 | 0 | 0 | 0 | 0 | 2 |
-| **Total** | 32 | 5 | 2 | 5 | 1 | 45 |
+| **Total** | 32 | 5 | 2 | 6 | 1 | 46 |
 
 ## Program downloads per UTC day
 
@@ -29,6 +29,7 @@ Increases between collections, assigned to the day of the later collection.
 | Day (UTC) | Downloads | Version and platform |
 | --- | ---: | --- |
 | Before 2026-10-16 18:51 (time unknown) | 14 | v0.1.0 windows-x64: 2, v1.0.0 windows-x64: 2, v1.0.1 macos-x64: 1, v1.0.1 windows-x64: 1, v1.0.1 macos-arm64: 1, v1.0.2 windows-x64: 1, v2.0.0 windows-x64: 4, v2.1.0 windows-x64: 2 |
+| 2026-11-03 | 1 | v2.1.2 linux-x64: 1 |
 | 2026-11-02 | 5 | v2.1.2 windows-x64: 4, v2.1.2 linux-x64: 1 |
 | 2026-11-01 | 3 | v2.1.2 windows-x64: 3 |
 | 2026-10-31 | 3 | v2.1.2 windows-x64: 3 |
@@ -49,6 +50,7 @@ Downloads happened at some moment between the two collection times.
 
 | From (UTC) | To (UTC) | Downloads | Version and platform |
 | --- | --- | ---: | --- |
+| 2026-11-03 06:58 | 2026-11-03 15:19 | 1 | v2.1.2 linux-x64: 1 |
 | 2026-11-02 17:13 | 2026-11-02 23:55 | 1 | v2.1.2 windows-x64: 1 |
 | 2026-11-02 06:25 | 2026-11-02 17:13 | 4 | v2.1.2 windows-x64: 3, v2.1.2 linux-x64: 1 |
 | 2026-11-01 01:17 | 2026-11-01 07:38 | 3 | v2.1.2 windows-x64: 3 |
