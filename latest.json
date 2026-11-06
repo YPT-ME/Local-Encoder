@@ -1,9 +1,9 @@
 {
   "schema_version": 1,
   "repository": "YPT-ME/Local-Encoder",
-  "collected_at": "2026-11-06T11:08:52.058110Z",
-  "total_downloads": 57,
-  "program_downloads": 54,
+  "collected_at": "2026-11-06T18:06:56.759805Z",
+  "total_downloads": 58,
+  "program_downloads": 55,
   "releases": [
     {
       "id": 414043584,
@@ -353,7 +353,7 @@
       "tag_name": "v2.1.2",
       "published_at": "2026-10-27T12:20:58Z",
       "prerelease": false,
-      "download_count": 29,
+      "download_count": 30,
       "assets": [
         {
           "id": 681517650,
@@ -378,7 +378,7 @@
         {
           "id": 681517655,
           "name": "LocalEncoder-linux-x64.tar.gz",
-          "download_count": 4
+          "download_count": 5
         },
         {
           "id": 681517855,
