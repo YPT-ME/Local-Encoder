@@ -22,9 +22,19 @@ You follow each step through a page in your browser.
 
 **No programming knowledge is needed.** The download includes the tools required to process videos.
 
-[Download](#download) · [Getting started](#getting-started) · [User guide](docs/user-guide.md) · [For developers](#for-developers)
+[Download](#download) · [Watch the walkthrough](#watch-your-first-upload) · [Getting started](#getting-started) · [User guide](docs/user-guide.md) · [For developers](#for-developers)
 
-<img alt="Local Encoder connected to an AVideo site, showing video progress and queue controls" src="https://github.com/user-attachments/assets/ad9b7e29-2e23-4f40-b3ad-1681af772221" />
+## Watch your first upload
+
+[![Animated preview: Local Encoder connected to AVideo, selecting a lesson and adding it to the queue](docs/media/first-upload-preview.webp)](docs/media/first-upload.mp4)
+
+**[Watch the complete walkthrough (MP4, English AI narration and captions)](docs/media/first-upload.mp4)** · [Read the same steps](docs/user-guide.md#connect-and-send)
+
+The preview shows file selection and the start of an upload. The full video shows the connection
+screen, a real upload through **Sent**, and playback on AVideo. Password entry is omitted;
+the chapter changes mark the cuts. File selection is slowed slightly for readability; processing
+is shown in real time. The demonstration uses a local test site and an original lesson.
+Processing time depends on your video, computer and connection.
 
 ## What you can do
 
@@ -62,19 +72,27 @@ Use the program downloads above; GitHub's **Code** button and **Source code** ar
 Have your **AVideo site address**, an **account with upload permission** and a video ready.
 You can use the same user name and password you normally use on your site.
 
-1. **Open Local Encoder.** Extract the whole download and keep its files together.
+1. **Open the app on your computer.** Extract the whole download and keep its files together.
    On Windows, open **LocalEncoder.exe**; on macOS, open **LocalEncoder**;
    on Linux, run `./LocalEncoder` from the extracted folder.
    Your browser opens the page that controls the app running on your computer.
+   This local control page is different from your AVideo website.
 2. **Connect to your site.** Enter your AVideo address (for example, `https://videos.example.com`),
    user name and password, then click **Connect**. The app checks your account and reads your
-   site's video settings.
-3. **Add your videos.** Paste a video link, choose files, drag them onto the page or select a folder.
-   You can add a title, category and description. Leave advanced options at their defaults to let
-   the app choose compatible settings, then click **Add to queue**.
+   site's video settings. Check **Connected as …** and the site name before sending anything.
+3. **Choose Files and add a video.** Select a file or drag it onto the drop area. Give a single
+   video a clear title, such as **Publish Your First Lesson**, and optionally add a category and
+   description. Leave **Advanced options** at their defaults, then click **Add to queue**.
+4. **Wait for confirmation, then review.** Follow **Download → Convert → Send**. A file from your
+   computer does not need an online download. Keep the app and computer running until **Sent**
+   and **The video is on your site.** appear. Click **Open video** to check playback;
+   use **Edit on site** to review its title, poster and viewing access before sharing.
 
-Keep your computer on while the queue runs. You can follow download, conversion and upload progress,
-then click **Open video** when your site confirms completion.
+**Sending at 99% is still working.** Wait for the site's confirmation rather than adding the same
+video again. [Help if an upload fails](docs/user-guide.md#troubleshooting).
+
+Have several videos or an online source? Use **Folder** to select videos already on your computer,
+or **Link** for one supported video URL. [Compare Files, Folder and Link](docs/user-guide.md#choose-files-folder-or-link).
 
 **On your first launch**, Windows or macOS may ask you to allow the app because it is not yet
 digitally signed. Follow the [opening instructions](docs/user-guide.md#first-start-warning)

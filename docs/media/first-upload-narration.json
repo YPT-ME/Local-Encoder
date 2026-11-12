@@ -1,0 +1,34 @@
+{
+  "language": "en-US",
+  "provider": "OpenAI.fm official demo",
+  "voice": "Cedar",
+  "model_shown_by_demo": "GPT-4o mini TTS",
+  "direction": "You are a friendly, confident software specialist giving a live product demonstration to a business customer. Speak in natural American English, warm and conversational, with a smile in your voice. Sound engaged and helpful. Use varied intonation, light emphasis on benefits and button names, and brief natural pauses between ideas. Keep a comfortable, brisk demo pace around 175 words per minute. Avoid a flat announcement voice, exaggerated advertising and over-enunciation. Read only the script, exactly as written. Pronounce AVideo as \"A Video\".",
+  "chapters": [
+    {
+      "name": "connect",
+      "start_seconds": 0.45,
+      "text": "Let's get your first lesson online. Local Encoder prepares your videos on your own computer, then sends them to AVideo. Start with your site's address and an account with upload permission. We'll skip the password entry here."
+    },
+    {
+      "name": "send",
+      "start_seconds": 18.3,
+      "text": "Once you're connected, choose Files and select your video. Add a clear title and description. The default settings take care of the technical choices. Then, click Add to queue."
+    },
+    {
+      "name": "progress",
+      "start_seconds": 33.3,
+      "text": "Now, Local Encoder handles the preparation for you, using your computer's processing power. You can follow each stage right here. Keep the app open and your computer running. Even at ninety-nine percent, the site may still be confirming the upload. Wait for Sent, and The video is on your site."
+    },
+    {
+      "name": "success",
+      "start_seconds": 61.1,
+      "text": "There it is. Your lesson is on the site. Select Open video to take a look."
+    },
+    {
+      "name": "verify",
+      "start_seconds": 68.25,
+      "text": "And here's the result, playing on AVideo. Before sharing, use Edit on site to check the title, preview image, and viewing access. Your lesson is ready for that final review."
+    }
+  ]
+}

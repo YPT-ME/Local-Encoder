@@ -133,6 +133,7 @@ Report real results; never claim a check passed without running it.
 ## Conventions
 
 - Commits: Conventional Commits (`feat:`, `fix:`, `refactor:`, `docs:`, `chore:`, `test:`).
+- Never add AI attribution (Co-Authored-By, Generated with, 🤖) to commits or PRs.
 - Code, comments, commit messages and docs in English. Reply to the user in the language they use.
 - One PR = one feature or fix, with tests; update `docs/user-guide.md` (and `README.md` if it changes the basics) for user-facing changes and
   `docs/encoder-parity.md` when parity changes.
