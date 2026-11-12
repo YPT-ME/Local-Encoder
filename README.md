@@ -26,9 +26,8 @@ You follow each step through a page in your browser.
 
 ## Watch your first upload
 
-[![Animated preview: Local Encoder connected to AVideo, selecting a lesson and adding it to the queue](docs/media/first-upload-preview.webp)](docs/media/first-upload.mp4)
+https://github.com/user-attachments/assets/a7d40b09-bd7b-4f18-9ba1-2adc7c7466f8
 
-**[Watch the complete walkthrough (MP4, English AI narration and captions)](docs/media/first-upload.mp4)** · [Read the same steps](docs/user-guide.md#connect-and-send)
 
 The preview shows file selection and the start of an upload. The full video shows the connection
 screen, a real upload through **Sent**, and playback on AVideo. Password entry is omitted;
