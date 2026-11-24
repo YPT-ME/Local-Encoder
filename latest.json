@@ -1,9 +1,9 @@
 {
   "schema_version": 1,
   "repository": "YPT-ME/Local-Encoder",
-  "collected_at": "2026-11-24T02:20:48.070738Z",
-  "total_downloads": 83,
-  "program_downloads": 80,
+  "collected_at": "2026-11-24T12:40:52.245974Z",
+  "total_downloads": 84,
+  "program_downloads": 81,
   "releases": [
     {
       "id": 414043584,
@@ -353,7 +353,7 @@
       "tag_name": "v2.1.2",
       "published_at": "2026-10-27T12:20:58Z",
       "prerelease": false,
-      "download_count": 55,
+      "download_count": 56,
       "assets": [
         {
           "id": 681517650,
@@ -363,7 +363,7 @@
         {
           "id": 681517651,
           "name": "LocalEncoder-macos-arm64.zip",
-          "download_count": 3
+          "download_count": 4
         },
         {
           "id": 681517652,
