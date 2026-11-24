@@ -136,8 +136,44 @@ open the new copy once. [Technical details](browser-integration.md).
 
 ## Update
 
-When **New version available** appears, download the new package. Let current jobs finish,
-quit the old app, extract the new download and open it. Releases track yt-dlp updates.
+Updates are manual. **New version … available – download** opens the latest release page;
+the app does not download or install the replacement for you. You can update even without
+that notice by using the [README's download table](../README.md#download).
+
+1. **Wait for the whole queue to finish.** Update between batches. Closing the app clears its
+   queue; unfinished jobs will not reappear when the new version starts. If a job failed and
+   you need its files, use **Open folder** and keep them before closing the app.
+2. **Stop the running copy.** Click **Stop Local Encoder** at the top of the control page and
+   confirm. The page says **Local Encoder was stopped**. You can then close the tab. You can
+   also choose **Quit** from its icon near the Windows clock or in the Mac menu bar.
+3. **Download the new program package.** Choose the same computer type in the
+   [download table](../README.md#download). On Mac, use the Apple Silicon or Intel choice that
+   matches **Apple menu → About This Mac**. GitHub's **Code** and **Source code** downloads
+   are for developers.
+4. **Extract everything into a new folder.** On Windows, right-click the ZIP, choose
+   **Extract All…**, select a new folder such as `LocalEncoder-new`, and click **Extract**.
+   On Mac or Linux, extract the archive into a new folder using your usual archive tool.
+   Keep the files together and keep the old folder until the new version opens successfully.
+5. **Start the extracted new copy.** Open **LocalEncoder.exe** on Windows or **LocalEncoder**
+   on Mac; on Linux, run `./LocalEncoder` from that new folder. Windows and Mac users should
+   open the extracted program rather than run it inside the ZIP. If the operating system
+   blocks it, see [First start warning](#first-start-warning).
+6. **Confirm the version.** Look for `v…` at the top of the control page and compare it with
+   the release you downloaded. Connect to your AVideo site again if asked. Update any desktop
+   shortcut to point to the new program location, and open the new copy once before using
+   **Open Local Encoder** from your AVideo site again.
+
+**What is kept?** Saved sites, preferences and send history are stored separately from the
+downloaded program folder and remain on this computer. Your password is not saved, so you
+may need to sign in again. Videos already sent to AVideo stay on the site. The processing
+queue is not saved when the app stops.
+
+**Still seeing the old version?** Stop Local Encoder again, open the file in the newly
+extracted folder directly, and reload its control page. An old shortcut can start the old
+copy. Starting a second copy while the old one is running reopens the running copy's page.
+
+Releases include updated download tools such as yt-dlp, which help Local Encoder adapt when
+YouTube and other source websites change.
 
 ## AVideo server requirement
 

@@ -22,7 +22,7 @@ You follow each step through a page in your browser.
 
 **No programming knowledge is needed.** The download includes the tools required to process videos.
 
-[Download](#download) · [Watch the walkthrough](#watch-your-first-upload) · [Getting started](#getting-started) · [User guide](docs/user-guide.md) · [For developers](#for-developers)
+[Download](#download) · [Watch the walkthrough](#watch-your-first-upload) · [Getting started](#getting-started) · [Update](#update-local-encoder) · [User guide](docs/user-guide.md) · [For developers](#for-developers)
 
 ## Watch your first upload
 
@@ -96,6 +96,33 @@ or **Link** for one supported video URL. [Compare Files, Folder and Link](docs/u
 **On your first launch**, Windows or macOS may ask you to allow the app because it is not yet
 digitally signed. Follow the [opening instructions](docs/user-guide.md#first-start-warning)
 if it is blocked.
+
+## Update Local Encoder
+
+**Updating means downloading and opening the new version on your computer.** The app's
+**New version … available – download** notice opens the download page; it does not install
+the update automatically. You can also use the [downloads above](#download) at any time.
+
+1. **Finish your videos first.** Wait until all queued videos have finished. The queue is
+   cleared when the app closes, so update between batches.
+2. **Close the old app.** Click **Stop Local Encoder** at the top of its browser page and
+   confirm. You can then close that tab. Alternatively, choose **Quit** from the Local Encoder
+   icon near the Windows clock or in the Mac menu bar.
+3. **Download the latest version for your computer.** Use the same Windows, Mac or Linux
+   choice in the [Download table](#download). Choose the program package, not **Source code**.
+4. **Extract the whole download into a new folder.** On Windows, right-click the downloaded
+   ZIP, choose **Extract All…**, select a new folder such as `LocalEncoder-new`, and click
+   **Extract**. Keep all extracted files together. Keep the old folder until the new copy works.
+5. **Open the program from the new folder.** Double-click **LocalEncoder.exe** on Windows or
+   **LocalEncoder** on Mac. On Linux, run `./LocalEncoder` in the new folder. On Windows and Mac,
+   open the extracted program rather than opening it inside the ZIP.
+6. **Check that the update worked.** The version shown at the top of the app's browser page
+   should match the release you downloaded. Connect to your site again if asked. If you use a
+   desktop shortcut, change it to open the program in the new folder.
+
+Your saved sites, preferences and send history are stored separately from the program folder
+and stay on this computer. Videos already published stay on your AVideo site.
+If the old version still opens, [follow these checks](docs/user-guide.md#update).
 
 ## Help and documentation
 
