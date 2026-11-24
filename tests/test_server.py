@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
@@ -64,6 +65,7 @@ def _mock_client(login: LoginResult | None = None) -> MagicMock:
     mock_client.get_server_config.return_value = ServerConfig()
     mock_client.get_site_status.return_value = SiteStatus(version="30.2")
     mock_client.register_video.return_value = RegisterVideoResult(videos_id=9, video_id_hash="h")
+    mock_client.upload_images.return_value = {"error": False}
     return mock_client
 
 
@@ -458,7 +460,9 @@ def test_pipeline_reuses_session_token_without_login(tmp_path: Path) -> None:
     _run(job, mock_client, tmp_path)
 
     mock_client.login.assert_not_called()
-    mock_client.notify_done.assert_called_once_with(9, "h")
+    mock_client.notify_done.assert_called_once_with(
+        9, "h", on_wait=job.log, check_cancel=job.check_cancel
+    )
     upload_kwargs = mock_client.upload_file.call_args.kwargs
     assert upload_kwargs["resolution"] == 720
     assert upload_kwargs["download_url"] == "https://example.com/watch"
@@ -584,6 +588,161 @@ def test_failed_completion_keeps_work_and_never_reports_success(tmp_path: Path) 
     assert job.result is None
     assert job.error is not None and job.error["code"] == "completion_failed"
     assert kept.exists()
+    # Every file reached the site: fail=1 would turn a complete video into an encoding error.
+    mock_client.notify_failed.assert_not_called()
+
+
+def test_retry_after_failed_completion_only_finishes_the_video(tmp_path: Path) -> None:
+    mock_client = _mock_client()
+    mock_client.notify_done.side_effect = AVideoAPIError("Not completed", code="completion_failed")
+    job = _job(fmt="hls")
+    with pytest.raises(AVideoAPIError):
+        _run(job, mock_client, tmp_path)
+    assert mock_client.upload_file.call_count == 1
+    mock_client.register_video.reset_mock()
+    mock_client.upload_file.reset_mock()
+    mock_client.upload_images.reset_mock()
+    mock_client.notify_done.reset_mock(side_effect=True)
+
+    _run(job, mock_client, tmp_path)
+
+    mock_client.register_video.assert_not_called()  # would put the video back in "encoding"
+    mock_client.upload_file.assert_not_called()
+    mock_client.upload_images.assert_not_called()
+    mock_client.notify_done.assert_called_once_with(
+        9, "", on_wait=job.log, check_cancel=job.check_cancel
+    )
+    assert job.status == "done"
+
+
+def test_completion_retry_ignores_changed_plan_and_missing_local_files(tmp_path: Path) -> None:
+    remote = _mock_client()
+    remote.notify_done.side_effect = AVideoAPIError("Not complete", code="completion_failed")
+    job = _job(fmt="mp4")
+    with pytest.raises(AVideoAPIError):
+        _run(job, remote, tmp_path)
+    assert job.raw_file is not None
+    job.raw_file.unlink()
+    for file in job.encoded:
+        file.unlink()
+    job.session.login.allowed_resolutions = [360]
+    remote.notify_done.reset_mock(side_effect=True)
+    remote.register_video.reset_mock()
+    with (
+        patch("local_encoder.server.AVideoClient", return_value=remote),
+        patch("local_encoder.server.probe_media") as probe,
+        patch("local_encoder.server._encode") as encode,
+    ):
+        server._pipeline(job)
+    probe.assert_not_called()
+    encode.assert_not_called()
+    remote.register_video.assert_not_called()
+    assert job.status == "done"
+
+
+def test_completion_retry_uses_renewed_login_and_exposes_no_hash(tmp_path: Path) -> None:
+    remote = _mock_client()
+    remote.register_video.return_value = RegisterVideoResult(9, "private-video-hash")
+    remote.notify_done.side_effect = AVideoAPIError("Not complete", code="completion_failed")
+    job = _job(fmt="mp4")
+    with pytest.raises(AVideoAPIError):
+        _run(job, remote, tmp_path)
+    renewed = _session()
+    renewed.login.encrypted_pass = "renewed-token"
+    server._sessions["renewed"] = renewed
+    job.status = "error"
+    response = client.post(f"/api/jobs/{job.id}/retry", json={"session_id": "renewed"})
+    assert response.status_code == 200
+    remote.notify_done.reset_mock(side_effect=True)
+    _run(job, remote, tmp_path)
+    remote.use_login.assert_called_with(renewed.login)
+    assert remote.notify_done.call_args.args == (9, "")
+    assert "private-video-hash" not in json.dumps(job.snapshot())
+
+
+@pytest.mark.parametrize("failure", ["transport", "rejected"])
+def test_image_failure_after_video_upload_can_resume_without_poisoning_video(
+    tmp_path: Path, failure: str
+) -> None:
+    remote = _mock_client()
+    job = _job(fmt="mp4")
+    image = tmp_path / "preview.jpg"
+    image.write_bytes(b"jpg")
+    if failure == "transport":
+        remote.upload_images.side_effect = AVideoAPIError("Connection lost")
+    else:
+        remote.upload_images.return_value = {"error": True}
+    with (
+        patch("local_encoder.server._thumbnails", return_value={"jpg": image}),
+        pytest.raises((AVideoAPIError, LocalEncoderError)),
+    ):
+        _run(job, remote, tmp_path)
+    assert job.files_sent and not job.extras_sent
+    remote.notify_failed.assert_not_called()
+    remote.notify_done.assert_not_called()
+    remote.upload_images.side_effect = None
+    remote.upload_images.return_value = {"error": False}
+    remote.register_video.reset_mock()
+    remote.upload_file.reset_mock()
+    _run(job, remote, tmp_path)
+    remote.register_video.assert_not_called()
+    remote.upload_file.assert_not_called()
+    assert remote.upload_images.call_count == 2
+    assert job.status == "done"
+
+
+def test_mp3_transfer_failure_is_retried_without_resending_video(tmp_path: Path) -> None:
+    remote = _mock_client()
+    remote.get_server_config.return_value = ServerConfig(auto_convert_to_mp3=True)
+    remote.upload_file.side_effect = [{}, AVideoAPIError("MP3 failed")]
+    job = _job(fmt="mp4")
+
+    def extract(raw: Path, output: Path, **kwargs: Any) -> Path:
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_bytes(b"mp3")
+        return output
+
+    with (
+        patch("local_encoder.server.extract_mp3", side_effect=extract),
+        pytest.raises(AVideoAPIError),
+    ):
+        _run(job, remote, tmp_path)
+    assert job.files_sent and not job.extras_sent
+    remote.notify_failed.assert_not_called()
+    remote.notify_done.assert_not_called()
+    remote.upload_file.reset_mock(side_effect=True)
+    _run(job, remote, tmp_path)
+    assert remote.upload_file.call_count == 1
+    assert remote.upload_file.call_args.kwargs["format_ext"] == "mp3"
+
+
+@pytest.mark.parametrize("busy", [True, False])
+def test_cancel_while_waiting_for_completion_keeps_media_and_does_not_fail_video(
+    tmp_path: Path, busy: bool
+) -> None:
+    from local_encoder.avideo_client import AVideoClient
+
+    job = _job(fmt="mp4")
+    remote = _mock_client()
+    with AVideoClient(job.session.server_url) as real:
+        remote.notify_done.side_effect = real.notify_done
+        response = MagicMock(status_code=200)
+        response.json.return_value = {"error": True, "code": "completion_in_progress"}
+        with (
+            patch.object(
+                real._http,
+                "post",
+                side_effect=[response if busy else httpx.RemoteProtocolError("lost")],
+            ),
+            patch(
+                "local_encoder.avideo_client._sleep", side_effect=lambda _: job.cancel_event.set()
+            ),
+            pytest.raises(JobCancelled),
+        ):
+            _run(job, remote, tmp_path)
+    assert job.files_sent
+    assert all(path.exists() for path in job.encoded)
+    remote.notify_failed.assert_not_called()
 
 
 def test_cancel_during_upload_stops_and_notifies_failure(tmp_path: Path) -> None:

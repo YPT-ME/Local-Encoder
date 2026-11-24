@@ -39,6 +39,7 @@ from local_encoder import __version__, desktop, folders, history, keep_awake, se
 from local_encoder.avideo_client import (
     AVideoClient,
     LoginResult,
+    RegisterVideoResult,
     ServerConfig,
     SiteStatus,
 )
@@ -383,6 +384,11 @@ class Job:
         self.encoded_fmt = ""
         self.encoded_resolutions: list[int] = []
         self.videos_id: int | None = None
+        # Checkpoints distinguish complete video media from ancillary uploads and completion.
+        self.files_sent = False
+        self.extras_sent = False
+        self.upload_duration = 0.0
+        self.upload_thumbs: dict[str, Path] = {}
 
     # -- state -----------------------------------------------------------
 
@@ -794,7 +800,7 @@ def _thumbnails(job: Job, cfg: Config, duration: float) -> dict[str, Path]:
 
 def _upload(job: Job, cfg: Config, plan: _Plan, duration: float, thumbs: dict[str, Path]) -> None:
     session = job.session
-    files = sorted(job.encoded, key=lambda p: p.stat().st_size)  # smallest first, like Encoder.php
+    files = [] if job.files_sent else sorted(job.encoded, key=lambda p: p.stat().st_size)
     download_url = job.source if job.kind == "url" else ""
     is_hls = plan.fmt == "hls"
     top = max((r for r in (output_resolution(f) for f in files) if r is not None), default=None)
@@ -803,86 +809,38 @@ def _upload(job: Job, cfg: Config, plan: _Plan, duration: float, thumbs: dict[st
     with AVideoClient(session.server_url, ssl_verify=session.ssl_verify) as client:
         client.use_login(session.login)
         job.log(f"Sending as {session.login.name or session.login.username}")
-        reg = client.register_video(
-            title=job.title,
-            format_ext="zip" if is_hls else "mp4",
-            resolution=None if is_hls else top,
-            duration=duration,
-            categories_id=job.options.categories_id,
-            description=job.description,
-            download_url=download_url,
-            videos_id=job.videos_id,  # a new attempt updates the same video
-        )
-        job.videos_id = reg.videos_id
-        job.log(f"Video created on the site (id {reg.videos_id})")
+        if job.files_sent and job.videos_id:
+            # Registering again would put the finished video back in "encoding".
+            # Use this attempt's authenticated account; an old hash may have expired or been revoked.
+            reg = RegisterVideoResult(job.videos_id, "")
+            job.log("The files are already on the site; asking it to finish the video")
+        else:
+            reg = client.register_video(
+                title=job.title,
+                format_ext="zip" if is_hls else "mp4",
+                resolution=None if is_hls else top,
+                duration=duration,
+                categories_id=job.options.categories_id,
+                description=job.description,
+                download_url=download_url,
+                videos_id=job.videos_id,  # a new attempt updates the same video
+            )
+            job.videos_id = reg.videos_id
+            job.log(f"Video created on the site (id {reg.videos_id})")
 
         # From here on the site has a video record: tell it when anything fails,
         # otherwise the video stays in "encoding" forever (Encoder.php does the same).
+        # Not once primary media arrived: fail=1 would mark a complete video as an encoding error.
         try:
-            total = sum(f.stat().st_size for f in files) or 1
-            done_bytes = 0
-            for enc_file in files:
-                size = enc_file.stat().st_size
-
-                def on_upload(_name: str, sent: int, _total: int, _base: int = done_bytes) -> None:
-                    job.check_cancel()
-                    pct = int((_base + sent) * 100 / total)
-                    job.emit("progress", {"step": "upload", "pct": min(pct, 99)})
-
-                client.upload_file(
-                    file_path=enc_file,
-                    videos_id=reg.videos_id,
-                    video_id_hash=reg.video_id_hash,
-                    title=job.title,
-                    format_ext="zip" if enc_file.suffix == ".zip" else "mp4",
-                    resolution=output_resolution(enc_file),
-                    duration=duration,
-                    categories_id=job.options.categories_id,
-                    description=job.description,
-                    download_url=download_url,
-                    progress_callback=on_upload,
-                )
-                done_bytes += size
-                job.log(f"Sent {enc_file.name} ({size // 1_048_576} MiB)")
-
-            if session.config.auto_convert_to_mp3 and not is_hls:
-                assert job.raw_file is not None
-                mp3_file = job.work_dir / f"{job.raw_file.stem}.mp3"
-                try:
-                    job.check_cancel()
-                    if not mp3_file.exists():
-                        job.log("Creating the MP3 the site asks for…")
-                        extract_mp3(job.raw_file, mp3_file, ffmpeg_bin=cfg.ffmpeg_bin)
-                    client.upload_file(
-                        file_path=mp3_file,
-                        videos_id=reg.videos_id,
-                        video_id_hash=reg.video_id_hash,
-                        title=job.title,
-                        format_ext="mp3",
-                        resolution=None,
-                        duration=duration,
-                        categories_id=job.options.categories_id,
-                        description=job.description,
-                    )
-                    job.log("MP3 sent")
-                except JobCancelled:
-                    raise
-                except Exception as exc:
-                    job.log(f"MP3 skipped: {exc}")
-
-            job.check_cancel()
-            if thumbs:
-                client.upload_images(
-                    videos_id=reg.videos_id,
-                    video_id_hash=reg.video_id_hash,
-                    duration=duration,
-                    jpg_path=thumbs.get("jpg"),
-                    gif_path=thumbs.get("gif"),
-                    webp_path=thumbs.get("webp"),
-                )
-            client.notify_done(reg.videos_id, reg.video_id_hash)
+            if not job.extras_sent:
+                _send_files(job, cfg, client, reg, files, duration, thumbs, is_hls)
+                job.extras_sent = True
+            client.notify_done(
+                reg.videos_id, reg.video_id_hash, on_wait=job.log, check_cancel=job.check_cancel
+            )
         except BaseException:
-            client.notify_failed(reg.videos_id, reg.video_id_hash)
+            if not job.files_sent:
+                client.notify_failed(reg.videos_id, reg.video_id_hash)
             raise
 
     site = session.server_url
@@ -896,6 +854,88 @@ def _upload(job: Job, cfg: Config, plan: _Plan, duration: float, thumbs: dict[st
     )
 
 
+def _send_files(
+    job: Job,
+    cfg: Config,
+    client: AVideoClient,
+    reg: RegisterVideoResult,
+    files: list[Path],
+    duration: float,
+    thumbs: dict[str, Path],
+    is_hls: bool,
+) -> None:
+    """Upload the converted files, the MP3 the site asks for, and the thumbnails."""
+    session = job.session
+    download_url = job.source if job.kind == "url" else ""
+    total = sum(f.stat().st_size for f in files) or 1
+    done_bytes = 0
+    for enc_file in files:
+        size = enc_file.stat().st_size
+
+        def on_upload(_name: str, sent: int, _total: int, _base: int = done_bytes) -> None:
+            job.check_cancel()
+            pct = int((_base + sent) * 100 / total)
+            job.emit("progress", {"step": "upload", "pct": min(pct, 99)})
+
+        client.upload_file(
+            file_path=enc_file,
+            videos_id=reg.videos_id,
+            video_id_hash=reg.video_id_hash,
+            title=job.title,
+            format_ext="zip" if enc_file.suffix == ".zip" else "mp4",
+            resolution=output_resolution(enc_file),
+            duration=duration,
+            categories_id=job.options.categories_id,
+            description=job.description,
+            download_url=download_url,
+            progress_callback=on_upload,
+        )
+        done_bytes += size
+        job.log(f"Sent {enc_file.name} ({size // 1_048_576} MiB)")
+
+    # From here a failed image/MP3 transfer or cancellation must not poison the video.
+    job.files_sent = True
+    if session.config.auto_convert_to_mp3 and not is_hls:
+        assert job.raw_file is not None
+        mp3_file = job.work_dir / f"{job.raw_file.stem}.mp3"
+        try:
+            job.check_cancel()
+            if not mp3_file.exists():
+                job.log("Creating the MP3 the site asks for…")
+                extract_mp3(job.raw_file, mp3_file, ffmpeg_bin=cfg.ffmpeg_bin)
+        except JobCancelled:
+            raise
+        except Exception as exc:
+            job.log(f"MP3 skipped: {exc}")
+        else:
+            client.upload_file(
+                file_path=mp3_file,
+                videos_id=reg.videos_id,
+                video_id_hash=reg.video_id_hash,
+                title=job.title,
+                format_ext="mp3",
+                resolution=None,
+                duration=duration,
+                categories_id=job.options.categories_id,
+                description=job.description,
+                progress_callback=lambda *_: job.check_cancel(),
+            )
+            job.log("MP3 sent")
+
+    job.check_cancel()
+    if thumbs:
+        result = client.upload_images(
+            videos_id=reg.videos_id,
+            video_id_hash=reg.video_id_hash,
+            duration=duration,
+            jpg_path=thumbs.get("jpg"),
+            gif_path=thumbs.get("gif"),
+            webp_path=thumbs.get("webp"),
+        )
+        if result.get("error"):
+            raise LocalEncoderError("images_failed")
+
+
 def _pipeline(job: Job) -> None:
     session, opts = job.session, job.options
     cfg = Config(
@@ -904,6 +944,19 @@ def _pipeline(job: Job) -> None:
         ssl_verify=session.ssl_verify,
     )
     job.work_dir.mkdir(parents=True, exist_ok=True)
+
+    # Once video media arrived, configuration changes or missing local sources must not
+    # register/re-encode the completed destination. Finish the original transfer instead.
+    if job.files_sent:
+        job.check_cancel()
+        _upload(
+            job,
+            cfg,
+            _Plan(job.encoded_fmt, job.encoded_resolutions),
+            job.upload_duration,
+            job.upload_thumbs,
+        )
+        return
 
     # 1. The video file
     if job.raw_file is None or not job.raw_file.exists():
@@ -946,6 +999,8 @@ def _pipeline(job: Job) -> None:
         _check_disk(job.work_dir, _estimate_bytes(plan, media.height, duration))
         job.emit("progress", {"step": "encode", "pct": 0})
         job.encoded = _encode(job, cfg, plan)
+        job.files_sent = False  # new files: send them again
+        job.extras_sent = False
         job.encoded_fmt = plan.fmt
         job.encoded_resolutions = list(plan.resolutions)
     job.emit("progress", {"step": "encode", "pct": 100})
@@ -953,6 +1008,8 @@ def _pipeline(job: Job) -> None:
 
     # 5. Thumbnails, then send everything
     thumbs = _thumbnails(job, cfg, duration)
+    job.upload_duration = duration
+    job.upload_thumbs = thumbs
     job.check_cancel()
     _upload(job, cfg, plan, duration, thumbs)
 

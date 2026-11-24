@@ -118,6 +118,12 @@ Closing the last page when idle also stops the app.
 
 A job completes only after the site confirms it. Failed uploads keep their converted files.
 
+Finishing can take a long time when the site moves the video to external storage. **Cancel** stops
+Local Encoder waiting; the site's storage operation may continue. Use **Try again** with the same
+site and account to resume. Once the video arrived, this preserves its original format and qualities
+and repeats only unfinished preview/audio uploads and confirmation. If access was refused, connect
+again and check upload/edit permissions. If the destination was deleted, add a new video explicitly.
+
 ## Open from your AVideo site
 
 Open the downloaded app once. On updated AVideo/Web Encoder sites, **Open Local Encoder**

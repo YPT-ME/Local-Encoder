@@ -90,6 +90,16 @@ MESSAGES: dict[str, str] = {
         "The site is still finishing this video. Your converted files are kept. "
         "Wait a little, then try again."
     ),
+    "streamer_access_denied": (
+        "The site refused access. Connect again with the same account and check its upload permissions."
+    ),
+    "destination_unavailable": (
+        "The video was removed or this account cannot edit it. Check the video and account permissions "
+        "on the site, then try again. If it was deleted, add it as a new video. Your files are kept."
+    ),
+    "images_failed": (
+        "The video arrived, but the site could not save its preview images. Your files are kept. Try again."
+    ),
     "file_receive_failed": (
         "Local Encoder could not receive the file. It is still selected. Try adding it again."
     ),

@@ -44,7 +44,7 @@ Verified on the local Docker site (https://vlu.me/, 2026-10-15):
 | B | `aVideoEncoder.json` → `objects/aVideoEncoder.json.php` | POST | See [field list B](#field-list-b) | `error, video_id, videos_id, video_id_hash, releaseDate, releaseTime, msg, code`. See [behavior notes B](#behavior-notes-b) |
 | C | `aVideoEncoderChunk.json` → `objects/aVideoEncoderChunk.json.php` | PUT raw body to `?file_id=<hex ≤64>&chunk=<i>&total=<n>` | Auth headers **required**: `X-Encoder-Upload-Token`, or `X-Encoder-User` + `X-Encoder-Pass` (token) | `{file, filesize, chunk, total, complete}`. Errors: 409 out-of-order/corrupt, 413, 400 size mismatch, 500. Re-sending a committed chunk returns `replay` (safe). Temp file is `sys_get_temp_dir()/YTPChunk_<id>`, removed after 4 h. Max 32 GB (`encoderChunkMaxTotalBytes`). Older servers: single PUT without `file_id` → `{file, filesize}` |
 | D | `objects/aVideoEncoderReceiveImage.json.php` | POST multipart | `videos_id`, `duration`, `image` (jpg), `gifimage`, `webpimage`, `spectrumimage`, or `downloadURL_*` (the Streamer downloads it). `update_video_id` is needed to overwrite existing images | `error, video_id, video_id_hash, jpgDest, gifDest, webpDest` |
-| E | `objects/aVideoEncoderNotifyIsDone.json.php` | POST | `videos_id`, `fail` (0/1), `overrideStatus`, `releaseDate`/`releaseTime` | `error, video_id, code`. Idempotent (completion marker); returns `completion_in_progress` while locked. Applies the final status (moderation → scheduled → overrideStatus → releaseDate → default) and fires plugin hooks |
+| E | `objects/aVideoEncoderNotifyIsDone.json.php` | POST | `videos_id`, `fail` (0/1), `overrideStatus`, `releaseDate`/`releaseTime` | `error, video_id, code`. A successful-completion marker protects subsequent calls; interrupted hooks can repeat side effects. Returns `completion_in_progress` while locked. Applies the final status (moderation → scheduled → overrideStatus → releaseDate → default) and fires plugin hooks |
 | F | `objects/aVideoEncoderLog.json.php` | POST | `msg`, `type` (`StatusObs`, `StatusChanged`, `error`, `info`), `videos_id` | Appended to the video's encoder log |
 | G | `objects/aVideoEncoderAlert.json.php` | POST | owner alerts (`waiting`, `processing`, `error`, `*_reminder`) or `type=system` | 404 on older Streamers. Used by the Encoder's cron monitor |
 | H | `status` → `objects/status.json.php` | GET | — | `max_file_size, file_upload_max_size, videoStorageLimitMinutes, currentStorageUsage, version, plugins{}` |
@@ -108,9 +108,43 @@ The other fields:
    - Then it sends B with `chunkFile`.
    - On 413 or when retries run out, it falls back to a multipart `video` POST.
 7. Notify (E): `fail=0` on success, `fail=1` on failure. Local Encoder requires an explicit
-   `error: false` response before marking the job successful or deleting its local files. A
-   `completion_in_progress` response is retried three times (2/4/8 s); other failures are surfaced
-   to the user and the converted files are kept.
+   `error: false` response before marking the job successful or deleting its local files.
+   - `completion_in_progress` is polled (2, 4, 8, 16, 32 s, then every minute) for up to 4 hours:
+     storage hooks such as CDNStorage move every HLS segment inside this request and can run for
+     hours (4,305 files, about 2 h ETA, for a 6 GB movie on flixhouse.com).
+   - A dropped connection, a read/write timeout or HTTP 502/503/504 is retried up to 8 times
+     (15, 30, 60, 120 s…). Connection/TLS failures keep their original diagnosis immediately.
+     HTTP 500 is not automatically retried: the completion marker only protects an operation
+     that finished successfully; an interrupted hook may already have sent a notification.
+     Even transport/gateway recovery cannot guarantee exactly-once plugin side effects.
+   - The web UI can cancel backoff, busy polling and an in-flight completion request. Cancellation
+     stops local waiting; it does not roll back a storage hook already running on the site.
+     The 4-hour busy deadline includes time spent making requests, rather than just sleep time.
+   - `fail=1` is sent only before primary video media receipt is acknowledged. `setAutoStatus()` turns `fail=1` into
+     status `x` (encoding error) and reruns the hooks, so it must never follow a complete upload.
+     After video media arrived, failed MP3/image transfers keep their files and can be retried
+     without sending the video again. MP3 extraction remains best effort. After auxiliary uploads
+     also succeed, "Try again" repeats only completion and skips the
+     register call, because register (B without media) sets status `e` and a request that hits
+     the completion marker does not set the final status again. This checkpoint is resumed before
+     probing or choosing a new format, even if the source was removed or site settings changed.
+     Retried callbacks use the current same-account login, without persisting/replaying an old
+     `video_id_hash`. Access/destination errors retain their codes: reconnect/restore permission
+     before retrying; if the destination was deleted, add a new video explicitly. A permission
+     error never silently recreates the destination.
+     A lost response from the media-save POST itself remains a pre-existing ambiguity: until
+     `upload_file()` returns, the client has no receipt checkpoint. This completion recovery
+     does not establish exactly-once media-save acknowledgements across arbitrary sites.
+   - Pitfall: `opcache_reset()` (the admin **Clear cache** button → full `clearCache()`) kills every
+     PHP request still running `opcache.force_restart_timeout` (default 180 s) later. Apache logs
+     `(<pid>): Error Cannot kill process <pid>!` and the client sees "Server disconnected without
+     sending a response". OPcache is shared by every site on the same Apache/PHP-FPM pool.
+     The reviewed AVideo change invalidates this site's cached scripts individually on a full
+     clear instead of calling `opcache_reset()`, including when timestamp checks are disabled.
+     Preloaded code still requires a separately managed PHP restart; file-cache-only/restricted
+     OPcache configurations need deployment-specific verification. Older sites may still reset
+     the pool, so the client retains transport recovery.
+   Other failures are surfaced to the user and the converted files are kept.
 
 ## Authentication details
 
@@ -123,7 +157,9 @@ The other fields:
   fallback behavior. Older Streamers keep the normal username/password connection flow.
 
 - The token from A is the only "already encoded" password current Streamers accept; pass-the-hash was removed. Always reuse the exact `pass` value returned by login.
-- When `video_id_hash` is present, the Streamer authenticates as the video owner (`useVideoHashOrLogin()`).
+- A current `video_id_hash` authenticates as its issuer (legacy hashes without `issuedTo` use the
+  owner). It expires after 24 hours and is bound to the owner/issuer passwords. Without a hash,
+  `useVideoHashOrLogin()` authenticates the request's current `user`/`pass` credentials.
 - Every `*.json.php` goes through `autoCSRFGuard`.
   - Bypassed by path: `aVideoEncoder.json.php`, `…Log`, `…NotifyIsDone`, `…ReceiveImage`, `login.json.php`, `categories.json.php`, `videos.json.php`.
   - Not bypassed: `aVideoEncoderChunk.json.php` and `aVideoEncoderAlert.json.php`. Those accept only same-origin requests or an AVideo user agent.

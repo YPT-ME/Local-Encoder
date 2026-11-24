@@ -21,8 +21,10 @@ import datetime
 import json
 import logging
 import re
+import threading
 import time
 from collections.abc import Callable, Iterator
+from concurrent.futures import Future
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -44,8 +46,14 @@ _STREAM_PIECE = 1024 * 1024
 # Retries per chunk before falling back to a multipart upload (PHP: MAX_CHUNK_SEND_RETRIES)
 MAX_CHUNK_RETRIES = 6
 
-# A completion hook may still hold the site's lock after an earlier request timed out.
-MAX_COMPLETION_RETRIES = 3
+# Completion hooks (for example moving an HLS package to external storage) can run for hours;
+# the site answers ``completion_in_progress`` while one runs, so keep asking for this long.
+MAX_COMPLETION_WAIT = 4 * 3600  # seconds
+
+# The site may drop the completion request while it works (a PHP worker restarted by an OPcache
+# reset, a proxy timeout). A successful completion marker makes subsequent calls safe;
+# interrupted hooks can still have partial side effects, so do not retry application errors.
+MAX_COMPLETION_RECONNECTS = 8
 
 # AVideo recognises encoder traffic by "AVideoEncoder" in the User-Agent
 # (isAVideoUserAgent()). Without it the chunk endpoint refuses the request and sites that
@@ -239,7 +247,7 @@ class AVideoClient:
                 return json.loads(match.group(1))
             except ValueError:
                 pass
-        logger.warning("%s: non-JSON response (HTTP %s): %.200s", action, status, text)
+        logger.warning("%s: non-JSON response (HTTP %s)", action, status)
         if "Bot Found" in text:
             raise AVideoAPIError(
                 f"The site blocked the request as a robot ({action}). "
@@ -491,7 +499,7 @@ class AVideoClient:
         body = self._json(resp, "registering the video")
         if not isinstance(body, dict):
             body = {}
-        logger.debug("register_video response: %s", body)
+        logger.debug("register_video response received")
 
         vid = int(body.get("videos_id") or body.get("video_id") or 0)
         if not vid:
@@ -566,7 +574,7 @@ class AVideoClient:
         result = self._json(resp, "saving the uploaded file")
         if not isinstance(result, dict):
             result = {}
-        logger.debug("upload finalize response: %s", result)
+        logger.debug("upload finalize response received")
         if result.get("error") is True:
             detail = str(result.get("msg") or "")[:300]
             raise AVideoAPIError(
@@ -782,7 +790,7 @@ class AVideoClient:
             result = self._json(resp, "sending the thumbnails")
             if not isinstance(result, dict):
                 result = {}
-            logger.debug("upload_images response: %s", result)
+            logger.debug("upload_images response received")
             return result
         finally:
             for fh in handles:
@@ -793,11 +801,16 @@ class AVideoClient:
         videos_id: int,
         video_id_hash: str,
         failed: bool = False,
+        on_wait: Callable[[str], None] | None = None,
+        check_cancel: Callable[[], None] | None = None,
     ) -> dict[str, Any]:
         """Notify AVideo that encoding has finished.
 
         Mirrors Encoder.php ``notifyIsDone`` call to
-        ``objects/aVideoEncoderNotifyIsDone.json.php``.
+        ``objects/aVideoEncoderNotifyIsDone.json.php``. Dropped connections and transient
+        gateway errors are retried; ``completion_in_progress`` is waited out. The marker
+        protects successful completion, not partially executed plugin hooks. ``on_wait``
+        reports waiting and ``check_cancel`` can stop it. ``failed=True`` is sent once.
         """
         data: dict[str, Any] = {
             **self._auth_fields(),
@@ -806,29 +819,114 @@ class AVideoClient:
             "fail": "1" if failed else "0",
             "return_vars": self._return_vars(),
         }
-        for attempt in range(MAX_COMPLETION_RETRIES + 1):
+        deadline = time.monotonic() + MAX_COMPLETION_WAIT
+        busy = 0
+        reconnects = 0
+
+        def post() -> httpx.Response:
+            url = self._url("objects/aVideoEncoderNotifyIsDone.json.php")
+            if check_cancel is None:
+                return self._http.post(url, data=data)
+            # A storage hook can hold the response for an hour. Let the local worker
+            # cancel even then; the authorized server hook may continue independently.
+            result: Future[httpx.Response] = Future()
+            finished = threading.Event()
+
+            def send() -> None:
+                try:
+                    result.set_result(self._http.post(url, data=data))
+                except BaseException as exc:
+                    result.set_exception(exc)
+                finally:
+                    finished.set()
+
+            threading.Thread(target=send, daemon=True).start()
+            while not finished.wait(0.2):
+                check_cancel()
+            check_cancel()
+            return result.result()
+
+        def wait(delay: float) -> None:
+            # Keep the web worker responsive during backoff, without coupling HTTP to Job.
+            if check_cancel is None:
+                _sleep(delay)
+                return
+            while delay > 0:
+                check_cancel()
+                interval = min(1.0, delay)
+                _sleep(interval)
+                delay -= interval
+            check_cancel()
+
+        while True:
+            if check_cancel:
+                check_cancel()
             logger.debug("POST notify_done videos_id=%d fail=%s", videos_id, failed)
-            resp = self._http.post(
-                self._url("objects/aVideoEncoderNotifyIsDone.json.php"),
-                data=data,
-            )
+            problem = ""
+            try:
+                resp = post()
+            except (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout):
+                # No request reached PHP; preserve the useful connection/TLS diagnosis.
+                raise
+            except httpx.TransportError as exc:
+                if failed:
+                    raise
+                problem = type(exc).__name__  # exception text may contain server-supplied secrets
+            else:
+                # A PHP fatal error can occur after a non-idempotent hook sent a notification.
+                # Only transient gateway/unavailable responses warrant automatic HTTP retries.
+                if resp.status_code in (502, 503, 504) and not failed:
+                    problem = f"HTTP {resp.status_code}"
+            if check_cancel:
+                check_cancel()
+            if problem:
+                if reconnects >= MAX_COMPLETION_RECONNECTS:
+                    raise AVideoAPIError(
+                        "The site received the files but did not confirm that the video is "
+                        f"complete ({problem}).",
+                        code="completion_failed",
+                    )
+                reconnects += 1
+                delay = min(120, 15 * 2 ** (reconnects - 1))  # 15, 30, 60, 120, 120… s
+                logger.warning(
+                    "Completion of videos_id=%d interrupted (%s); asking again in %ds (%d/%d)",
+                    videos_id,
+                    problem,
+                    delay,
+                    reconnects,
+                    MAX_COMPLETION_RECONNECTS,
+                )
+                if on_wait:
+                    on_wait("The site stopped answering while finishing the video; asking again…")
+                wait(delay)
+                continue
             self._check_status(resp, "finishing the upload")
             result = self._json(resp, "finishing the upload")
             if not isinstance(result, dict):
                 result = {}
             if result.get("error") is False:
                 return result
-            code = "completion_failed"
+            code = str(result.get("code") or "completion_failed")
+            if code not in (
+                "completion_in_progress",
+                "streamer_access_denied",
+                "destination_unavailable",
+            ):
+                code = "completion_failed"
             if result.get("code") == "completion_in_progress":
                 code = "completion_in_progress"
-                if not failed and attempt < MAX_COMPLETION_RETRIES:
-                    _sleep(2 ** (attempt + 1))
+                remaining = deadline - time.monotonic()
+                if not failed and remaining > 0:
+                    busy += 1
+                    delay = min(60, 2 ** min(busy, 6), remaining)
+                    if on_wait and busy == 1:
+                        on_wait("The site is still finishing the video; waiting…")
+                    wait(delay)
                     continue
             raise AVideoAPIError(
                 "The site has not confirmed that the video is complete. Try again shortly.",
                 code=code,
             )
-        raise AssertionError("Completion retry loop did not return or raise")
 
     def notify_failed(self, videos_id: int, video_id_hash: str) -> None:
         """Best-effort ``fail=1`` so the site does not keep the video in "encoding" forever."""

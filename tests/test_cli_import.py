@@ -20,9 +20,9 @@ from local_encoder.config import Config
 from local_encoder.encoder import SOFTWARE_CODEC, MediaInfo
 
 
-@pytest.mark.parametrize("completed", [True, False])
+@pytest.mark.parametrize("failure", ["", "completion", "upload", "images", "mp3", "cancel"])
 def test_import_only_cleans_files_after_confirmed_completion(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, completed: bool
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, failure: str
 ) -> None:
     work = tmp_path / "work"
     work.mkdir()
@@ -36,10 +36,26 @@ def test_import_only_cleans_files_after_confirmed_completion(
     remote.__enter__.return_value = remote
     remote.login.return_value = LoginResult(True, True, "test", "alice", 7)
     remote.get_server_config.return_value = ServerConfig()
-    remote.register_video.return_value = RegisterVideoResult(9, "test")
+    remote.register_video.return_value = RegisterVideoResult(9, "private-video-hash")
     remote.upload_file.return_value = {}
-    if not completed:
+    remote.upload_images.return_value = {"error": False}
+    if failure == "completion":
         remote.notify_done.side_effect = AVideoAPIError("Not completed", code="completion_failed")
+    elif failure == "cancel":
+        remote.notify_done.side_effect = KeyboardInterrupt()
+    elif failure == "upload":
+        remote.upload_file.side_effect = AVideoAPIError("Upload failed")
+    elif failure == "images":
+        remote.upload_images.side_effect = AVideoAPIError("Image transfer failed")
+    elif failure == "mp3":
+        remote.get_server_config.return_value = ServerConfig(auto_convert_to_mp3=True)
+        remote.upload_file.side_effect = [{}, AVideoAPIError("MP3 transfer failed")]
+
+        def extract(raw: Path, output: Path, **kwargs: object) -> Path:
+            output.write_bytes(b"mp3")
+            return output
+
+        monkeypatch.setattr(cli, "extract_mp3", extract)
     monkeypatch.setattr(cli, "load_config", lambda *args: cfg)
     monkeypatch.setattr(cli, "AVideoClient", lambda *args, **kwargs: remote)
     monkeypatch.setattr(cli.keep_awake, "inhibit", nullcontext)
@@ -58,7 +74,15 @@ def test_import_only_cleans_files_after_confirmed_completion(
 
     result = CliRunner().invoke(cli.app, ["import", "https://example.com/watch", "--format", "mp4"])
 
-    assert result.exit_code == (0 if completed else 1), result.output
+    completed = not failure
+    assert result.exit_code == (130 if failure == "cancel" else 0 if completed else 1), (
+        result.output
+    )
+    if failure == "upload":
+        remote.notify_failed.assert_called_once_with(9, "private-video-hash")
+    else:
+        remote.notify_failed.assert_not_called()
+    assert "private-video" not in result.output
     assert history.list_entries()[0].status == ("success" if completed else "failed")
     assert raw.exists() is not completed
     assert encoded.exists() is not completed

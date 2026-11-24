@@ -60,7 +60,8 @@ Found in the 2026-10-15 baseline and fixed the same day. Unit-tested; the audit 
 2. ✅ **User-Agent** is `AVideoEncoder local-encoder/<version>` (`avideo_client.py:50`, `:121`).
 3. ✅ **`duration`** is sent as `HH:MM:SS` (`utils.py:20-29`; used at `avideo_client.py:365`,
    `:431`, `:631`).
-4. ✅ **`fail=1` on any error after registration** (`avideo_client.py:698-704`; `server.py:456-458`;
+4. ✅ **`fail=1` on any error after registration and before every file arrived** (a failed
+   completion call alone is retried, never reported as `fail=1`) (`avideo_client.py:698-704`; `server.py:456-458`;
    `cli.py:480-482`). Files are kept after a failure (`server.py:464-481`, `cli.py:516-517`).
 5. ✅ **The HLS zip and the MP3 are sent with an empty resolution** (`server.py:352`, `cli.py:334`).
    MP4 resolutions come only from the `_<res>p` suffix Local Encoder adds (`encoder.py:53-64`).
@@ -158,11 +159,11 @@ Otherwise it shows Low/SD/HD checkboxes (`E/view/index_shareVideos.php:5-7`,
 | --- | --- | --- |
 | Persistent queue with statuses | ❌ | The queue lives in memory, with one worker (`server.py:53-91`), and is lost on restart. The Encoder has 9 statuses (`E/objects/Encoder.php:26-34`). |
 | Priority, delete/cancel, re-queue, "Recheck" (send again without re-encoding) | 🟡 | Cancel, “Try again” (reuses the download and the converted files, updates the same video), remove, open folder (`server.py`, `/api/jobs/{id}/…`). No priority. |
-| Automatic retry | 🟡 | Only per upload chunk, the same as `sendFileChunk`. The Encoder also re-runs jobs up to 4 times, and retries transient network errors up to 5 times with a wait of `min(120, 5·n)` minutes (`E/objects/Encoder.php:1298-1379`). |
-| Resume a transfer without re-encoding | ✅ | “Try again” requires the original site and account and sends the kept files with the same `videos_id`. A changed format or resolution plan triggers a new encode instead of sending an obsolete ladder. |
+| Automatic retry | 🟡 | Per upload chunk and during completion transport/gateway recovery. No whole-job automatic requeue. The Encoder also retries jobs and transient failures (`E/objects/Encoder.php:1298-1379`). |
+| Resume a transfer without re-encoding | ✅ | “Try again” requires the original site and account and sends kept files to the same `videos_id`. Before video transfer finishes, a changed format/quality plan triggers a new encode. Once video media arrived, retries preserve that destination/plan, repeat pending auxiliary transfers and then complete, using current login credentials rather than an old video hash. |
 | Renew site access when the token expires | ❌ | The Encoder has a manual "Renew site access" action (`E/objects/Streamer.php:163-198`). Local Encoder sessions last 12 h, but a queued job does not re-check its token when it starts. |
-| Notify done (success) | ✅ | Both web UI and CLI require an explicit `error: false` acknowledgement before success/history/cleanup. `completion_in_progress` is retried three times with 2/4/8 s waits; a persistent busy state or a completion failure keeps the converted files for “Try again”. |
-| Notify `fail=1` on error | ✅ | `AVideoClient.notify_failed`. |
+| Notify done (success) | ✅ | Both web UI and CLI require explicit `error: false` before success/history/cleanup. Busy completion is polled for up to 4 h; dropped responses/read-write timeouts and HTTP 502/503/504 are retried 8 times. HTTP 500 and connection/TLS errors stop immediately. The web UI can cancel waiting and in-flight completion; the site may continue its authorized hooks. A marker does not guarantee exactly-once interrupted hooks. See protocol step 7. |
+| Notify `fail=1` on error | ✅ | `AVideoClient.notify_failed`, only while primary video media is missing. Once it arrived, auxiliary/completion failures keep local files and never send `fail=1`, which would mark the complete video as an encoding error (`x`). MP3 transfer failures remain retryable; MP3 extraction remains best effort. |
 | Encoder log to the site (`aVideoEncoderLog`) | ❌ | The Encoder logs every status change and every step (`E/objects/Encoder.php:359-433`, `:4438-4461`). |
 | Keep or delete local files | 🟡 | Files are kept after failures in both. `--keep-files` also keeps them after success (CLI only). The Encoder's "Auto remove" is an admin setting. |
 | Upload limit / storage check (`status`) | ➖ | The Encoder does not check either (its `status` read is dead code, `E/view/index.php:860-893`). Checking `max_file_size` before uploading would still help Local Encoder users. |

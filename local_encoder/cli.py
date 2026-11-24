@@ -421,14 +421,14 @@ def import_video(
                     description=video_description,
                     download_url=video_url,
                 )
-                rpt.success(
-                    f"Video registered: videos_id={reg.videos_id} hash={reg.video_id_hash[:12]}…"
-                )
+                rpt.success(f"Video registered: videos_id={reg.videos_id}")
                 if reg.msg:
                     rpt.info(f"  Server message: {reg.msg}")
 
                 # From here on the site has a video record: tell it when anything fails,
                 # otherwise the video stays in "encoding" forever (Encoder.php does the same).
+                # Not once every file arrived: fail=1 would mark a complete video as an error.
+                files_sent = False
                 try:
                     # 5c. Upload encoded file(s)
                     # For multi-res MP4 upload smallest files first (like PHP encoder),
@@ -466,6 +466,8 @@ def import_video(
                             rpt.info(f"  Server: {upload_result['msg']}")
 
                     hist_entry.videos_id = reg.videos_id
+                    # Ancillary failures must not mark complete video media as failed.
+                    files_sent = True
 
                     # 5c-ii. Auto-extract and upload MP3 if server config requires it
                     if server_cfg.auto_convert_to_mp3 and resolved_fmt != "hls":
@@ -474,6 +476,9 @@ def import_video(
                         try:
                             rpt.info("Auto-extracting MP3 (server config: autoConvertVideosToMP3)…")
                             extract_mp3(raw_file, mp3_file, ffmpeg_bin=cfg.ffmpeg_bin)
+                        except Exception as exc:
+                            rpt.warning(f"MP3 auto-extraction skipped: {exc}")
+                        else:
                             mp3_size = mp3_file.stat().st_size
                             rpt.begin_upload(mp3_size)
                             client.upload_file(
@@ -489,8 +494,6 @@ def import_video(
                                 progress_callback=rpt.on_upload,
                             )
                             rpt.success(f"MP3 uploaded ({mp3_size // 1_048_576} MiB)")
-                        except Exception as exc:
-                            rpt.warning(f"MP3 auto-extraction skipped: {exc}")
 
                     # 5d. Upload thumbnails
                     rpt.info("Uploading thumbnails…")
@@ -504,16 +507,17 @@ def import_video(
                     )
                     if not img_result.get("error"):
                         rpt.success("Thumbnails uploaded")
-                    else:
-                        rpt.warning(f"Thumbnail upload: {img_result.get('msg', 'error')}")
+                    elif any(p.exists() for p in (jpg_file, gif_file, webp_file)):
+                        raise LocalEncoderError("images_failed")
 
                     # 5e. Notify encoding done
                     rpt.info("Notifying AVideo that encoding is complete…")
-                    client.notify_done(reg.videos_id, reg.video_id_hash)
+                    client.notify_done(reg.videos_id, reg.video_id_hash, on_wait=rpt.info)
                     rpt.success(f"Done! Video is live: {cfg.server_url}video/{reg.videos_id}")
 
                 except BaseException:
-                    client.notify_failed(reg.videos_id, reg.video_id_hash)
+                    if not files_sent:
+                        client.notify_failed(reg.videos_id, reg.video_id_hash)
                     raise
 
                 hist_entry.status = "success"

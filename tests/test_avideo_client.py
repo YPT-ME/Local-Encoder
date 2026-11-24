@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -11,6 +12,8 @@ import pytest
 
 from local_encoder.avideo_client import (
     MAX_CHUNK_RETRIES,
+    MAX_COMPLETION_RECONNECTS,
+    MAX_COMPLETION_WAIT,
     USER_AGENT,
     AVideoAPIError,
     AVideoClient,
@@ -373,6 +376,94 @@ def test_notify_done_retries_completion_in_progress() -> None:
 
 
 def test_notify_done_stops_retrying_a_busy_site() -> None:
+    now = [0.0]
+
+    def advance(delay: float) -> None:
+        now[0] += delay
+
+    with AVideoClient("https://example.com/") as c:
+        with (
+            patch.object(
+                c._http,
+                "post",
+                return_value=_mock_response({"error": True, "code": "completion_in_progress"}),
+            ),
+            patch("local_encoder.avideo_client._sleep", side_effect=advance) as sleep,
+            patch("local_encoder.avideo_client.time.monotonic", side_effect=lambda: now[0]),
+            pytest.raises(AVideoAPIError) as excinfo,
+        ):
+            c.notify_done(42, "h")
+    assert excinfo.value.code == "completion_in_progress"
+    # A storage hook can run for hours: the client waits that long before giving up.
+    assert MAX_COMPLETION_WAIT <= sum(call.args[0] for call in sleep.call_args_list)
+
+
+@pytest.mark.parametrize("code", ["streamer_access_denied", "destination_unavailable"])
+def test_completion_preserves_actionable_access_errors(code: str) -> None:
+    with AVideoClient("https://example.com/") as c:
+        with patch.object(
+            c._http, "post", return_value=_mock_response({"error": True, "code": code})
+        ):
+            with pytest.raises(AVideoAPIError) as caught:
+                c.notify_done(42, "secret")
+    assert caught.value.code == code
+
+
+@pytest.mark.parametrize("status", [500, 501, 507])
+def test_completion_does_not_replay_application_errors(status: int) -> None:
+    with AVideoClient("https://example.com/") as c:
+        with (
+            patch.object(c._http, "post", return_value=_mock_response({}, status)) as post,
+            patch("local_encoder.avideo_client._sleep") as sleep,
+            pytest.raises(AVideoAPIError),
+        ):
+            c.notify_done(42, "secret")
+    assert post.call_count == 1
+    sleep.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "problem", [httpx.ConnectError("offline"), httpx.ConnectError("SSL certificate")]
+)
+def test_completion_connection_errors_keep_their_diagnosis(problem: httpx.ConnectError) -> None:
+    with AVideoClient("https://example.com/") as c:
+        with (
+            patch.object(c._http, "post", side_effect=problem) as post,
+            patch("local_encoder.avideo_client._sleep") as sleep,
+            pytest.raises(httpx.ConnectError),
+        ):
+            c.notify_done(42, "secret")
+    assert post.call_count == 1
+    sleep.assert_not_called()
+
+
+@pytest.mark.parametrize("busy", [True, False])
+def test_completion_backoff_can_be_cancelled(busy: bool) -> None:
+    from local_encoder.errors import JobCancelled
+
+    cancelled = [False]
+
+    def check() -> None:
+        if cancelled[0]:
+            raise JobCancelled()
+
+    def cancel(delay: float) -> None:
+        assert delay <= 1
+        cancelled[0] = True
+
+    response = _mock_response({"error": True, "code": "completion_in_progress"})
+    problem = httpx.RemoteProtocolError("dropped")
+    with AVideoClient("https://example.com/") as c:
+        with (
+            patch.object(c._http, "post", side_effect=[response if busy else problem]) as post,
+            patch("local_encoder.avideo_client._sleep", side_effect=cancel),
+            pytest.raises(JobCancelled),
+        ):
+            c.notify_done(42, "secret", check_cancel=check)
+    assert post.call_count == 1
+
+
+def test_completion_deadline_counts_request_time() -> None:
     with AVideoClient("https://example.com/") as c:
         with (
             patch.object(
@@ -380,12 +471,133 @@ def test_notify_done_stops_retrying_a_busy_site() -> None:
                 "post",
                 return_value=_mock_response({"error": True, "code": "completion_in_progress"}),
             ) as post,
+            patch(
+                "local_encoder.avideo_client.time.monotonic",
+                side_effect=[0, MAX_COMPLETION_WAIT + 1],
+            ),
+            patch("local_encoder.avideo_client._sleep") as sleep,
+            pytest.raises(AVideoAPIError),
+        ):
+            c.notify_done(42, "secret")
+    assert post.call_count == 1
+    sleep.assert_not_called()
+
+
+def test_completion_reconnect_never_logs_exception_secrets(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with AVideoClient("https://example.com/") as c:
+        with (
+            patch.object(
+                c._http,
+                "post",
+                side_effect=[
+                    httpx.RemoteProtocolError("private-hash"),
+                    _mock_response({"error": False}),
+                ],
+            ),
+            patch("local_encoder.avideo_client._sleep"),
+        ):
+            c.notify_done(42, "private-hash")
+    assert "private-hash" not in caplog.text
+
+
+def test_completion_can_cancel_an_inflight_request() -> None:
+    from local_encoder.errors import JobCancelled
+
+    started, release, stopped = threading.Event(), threading.Event(), threading.Event()
+
+    def send(*args: Any, **kwargs: Any) -> Any:
+        started.set()
+        try:
+            assert release.wait(3), "The cancelled caller did not return promptly"
+            raise httpx.RemoteProtocolError("closed")
+        finally:
+            stopped.set()
+
+    def check() -> None:
+        if started.is_set():
+            raise JobCancelled()
+
+    with AVideoClient("https://example.com/") as c:
+        try:
+            with patch.object(c._http, "post", side_effect=send), pytest.raises(JobCancelled):
+                c.notify_done(42, "private-hash", check_cancel=check)
+        finally:
+            release.set()
+            assert stopped.wait(3)
+
+
+def test_register_response_never_logs_video_hash(caplog: pytest.LogCaptureFixture) -> None:
+    caplog.set_level("DEBUG", logger="local_encoder.avideo_client")
+    with AVideoClient("https://example.com/") as c:
+        with patch.object(
+            c._http,
+            "post",
+            return_value=_mock_response({"videos_id": 42, "video_id_hash": "private-hash"}),
+        ):
+            c.register_video(title="Video", format_ext="mp4", resolution=360, duration=1)
+    assert "private-hash" not in caplog.text
+
+
+def test_non_json_completion_never_logs_response_secrets(caplog: pytest.LogCaptureFixture) -> None:
+    response = _mock_response({})
+    response.json.side_effect = ValueError("Not JSON")
+    response.text = "Invalid video_id_hash=private-hash"
+    with AVideoClient("https://example.com/") as c:
+        with patch.object(c._http, "post", return_value=response), pytest.raises(AVideoAPIError):
+            c.notify_done(42, "private-hash")
+    assert "private-hash" not in caplog.text
+
+
+@pytest.mark.parametrize(
+    "dropped",
+    [
+        httpx.RemoteProtocolError("Server disconnected without sending a response."),
+        httpx.ReadTimeout("timed out"),
+        _mock_response({}, status_code=502),
+    ],
+)
+def test_notify_done_asks_again_when_the_site_drops_the_request(dropped: Any) -> None:
+    """flixhouse.com: an OPcache reset killed the PHP worker running the storage hook."""
+    success = _mock_response({"error": False, "video_id": 42})
+    messages: list[str] = []
+    with AVideoClient("https://example.com/") as c:
+        with (
+            patch.object(c._http, "post", side_effect=[dropped, success]) as post,
+            patch("local_encoder.avideo_client._sleep") as sleep,
+        ):
+            assert c.notify_done(42, "h", on_wait=messages.append)["error"] is False
+    assert post.call_count == 2
+    assert post.call_args_list[0].kwargs["data"]["fail"] == "0"
+    assert post.call_args_list[1].kwargs["data"] == post.call_args_list[0].kwargs["data"]
+    sleep.assert_called_once()
+    assert messages
+
+
+def test_notify_done_gives_up_after_repeated_drops() -> None:
+    with AVideoClient("https://example.com/") as c:
+        with (
+            patch.object(
+                c._http, "post", side_effect=httpx.RemoteProtocolError("disconnected")
+            ) as post,
             patch("local_encoder.avideo_client._sleep"),
             pytest.raises(AVideoAPIError) as excinfo,
         ):
             c.notify_done(42, "h")
-    assert excinfo.value.code == "completion_in_progress"
-    assert post.call_count == 4
+    assert excinfo.value.code == "completion_failed"
+    assert post.call_count == MAX_COMPLETION_RECONNECTS + 1
+
+
+def test_notify_failed_is_sent_once() -> None:
+    with AVideoClient("https://example.com/") as c:
+        with (
+            patch.object(c._http, "post", side_effect=httpx.RemoteProtocolError("x")) as post,
+            patch("local_encoder.avideo_client._sleep") as sleep,
+        ):
+            c.notify_failed(42, "h")
+    assert post.call_count == 1
+    sleep.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
