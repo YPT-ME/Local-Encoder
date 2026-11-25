@@ -120,6 +120,8 @@ the update automatically. You can also use the [downloads above](#download) at a
    should match the release you downloaded. Connect to your site again if asked. If you use a
    desktop shortcut, change it to open the program in the new folder.
 
+https://github.com/user-attachments/assets/f5a5387f-c6bf-41c0-897e-981e90665468
+
 Your saved sites, preferences and send history are stored separately from the program folder
 and stay on this computer. Videos already published stay on your AVideo site.
 If the old version still opens, [follow these checks](docs/user-guide.md#update).
