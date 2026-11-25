@@ -46,9 +46,11 @@ _STREAM_PIECE = 1024 * 1024
 # Retries per chunk before falling back to a multipart upload (PHP: MAX_CHUNK_SEND_RETRIES)
 MAX_CHUNK_RETRIES = 6
 
-# Completion hooks (for example moving an HLS package to external storage) can run for hours;
-# the site answers ``completion_in_progress`` while one runs, so keep asking for this long.
-MAX_COMPLETION_WAIT = 4 * 3600  # seconds
+# The completion request saves the video's final status within seconds and only then runs the
+# site's plugin hooks (for example CDNStorage copying every HLS segment to storage, which can
+# take hours). No answer within this time means the site is post-processing a finished video:
+# Local Encoder's work is done and the site continues on its own.
+COMPLETION_RESPONSE_TIMEOUT = 120.0  # seconds
 
 # The site may drop the completion request while it works (a PHP worker restarted by an OPcache
 # reset, a proxy timeout). A successful completion marker makes subsequent calls safe;
@@ -808,9 +810,11 @@ class AVideoClient:
 
         Mirrors Encoder.php ``notifyIsDone`` call to
         ``objects/aVideoEncoderNotifyIsDone.json.php``. Dropped connections and transient
-        gateway errors are retried; ``completion_in_progress`` is waited out. The marker
-        protects successful completion, not partially executed plugin hooks. ``on_wait``
-        reports waiting and ``check_cancel`` can stop it. ``failed=True`` is sent once.
+        gateway errors are retried. The site does not answer until its plugin hooks finish
+        (storage moves can take hours), so no answer within ``COMPLETION_RESPONSE_TIMEOUT``,
+        or ``completion_in_progress`` from a request still running, counts as done: the site
+        already has the video and finishes post-processing on its own. ``on_wait`` reports
+        progress messages and ``check_cancel`` can stop it. ``failed=True`` is sent once.
         """
         data: dict[str, Any] = {
             **self._auth_fields(),
@@ -819,14 +823,19 @@ class AVideoClient:
             "fail": "1" if failed else "0",
             "return_vars": self._return_vars(),
         }
-        deadline = time.monotonic() + MAX_COMPLETION_WAIT
-        busy = 0
         reconnects = 0
+        timeout = httpx.Timeout(
+            connect=30.0, read=COMPLETION_RESPONSE_TIMEOUT, write=60.0, pool=30.0
+        )
+        post_processing = (
+            "The site has the video and is still processing it (for example, copying it to "
+            "storage). That continues on the site; nothing else is needed here."
+        )
 
         def post() -> httpx.Response:
             url = self._url("objects/aVideoEncoderNotifyIsDone.json.php")
             if check_cancel is None:
-                return self._http.post(url, data=data)
+                return self._http.post(url, data=data, timeout=timeout)
             # A storage hook can hold the response for an hour. Let the local worker
             # cancel even then; the authorized server hook may continue independently.
             result: Future[httpx.Response] = Future()
@@ -834,7 +843,7 @@ class AVideoClient:
 
             def send() -> None:
                 try:
-                    result.set_result(self._http.post(url, data=data))
+                    result.set_result(self._http.post(url, data=data, timeout=timeout))
                 except BaseException as exc:
                     result.set_exception(exc)
                 finally:
@@ -868,6 +877,19 @@ class AVideoClient:
             except (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout):
                 # No request reached PHP; preserve the useful connection/TLS diagnosis.
                 raise
+            except httpx.ReadTimeout:
+                if failed:
+                    raise
+                # The request reached PHP and is still running: the status is saved and the
+                # site is running its hooks. Asking again would not make them finish sooner.
+                logger.info(
+                    "videos_id=%d: no completion answer in %ds; the site is post-processing",
+                    videos_id,
+                    COMPLETION_RESPONSE_TIMEOUT,
+                )
+                if on_wait:
+                    on_wait(post_processing)
+                return {"error": False, "video_id": videos_id, "code": "site_post_processing"}
             except httpx.TransportError as exc:
                 if failed:
                     raise
@@ -913,16 +935,12 @@ class AVideoClient:
                 "destination_unavailable",
             ):
                 code = "completion_failed"
-            if result.get("code") == "completion_in_progress":
-                code = "completion_in_progress"
-                remaining = deadline - time.monotonic()
-                if not failed and remaining > 0:
-                    busy += 1
-                    delay = min(60, 2 ** min(busy, 6), remaining)
-                    if on_wait and busy == 1:
-                        on_wait("The site is still finishing the video; waiting…")
-                    wait(delay)
-                    continue
+            if code == "completion_in_progress" and not failed:
+                # Another completion request for this video holds the site's lock and is
+                # running the hooks (for example our earlier request after a timeout).
+                if on_wait:
+                    on_wait(post_processing)
+                return {"error": False, "video_id": videos_id, "code": "completion_in_progress"}
             raise AVideoAPIError(
                 "The site has not confirmed that the video is complete. Try again shortly.",
                 code=code,

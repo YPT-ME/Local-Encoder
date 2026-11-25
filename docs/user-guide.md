@@ -116,10 +116,12 @@ Closing the last page when idle also stops the app.
 | Some files could not be added | They stay selected so you can try again. |
 | Need support | Click **Report a problem** and attach the generated log file to a [GitHub issue](https://github.com/YPT-ME/Local-Encoder/issues). Passwords are excluded. |
 
-A job completes only after the site confirms it. Failed uploads keep their converted files.
+A job completes only after the site has the video. Failed uploads keep their converted files.
 
-Finishing can take a long time when the site moves the video to external storage. **Cancel** stops
-Local Encoder waiting; the site's storage operation may continue. Use **Try again** with the same
+Some sites copy each new video to external storage after receiving it, which can take hours.
+Local Encoder does not wait for that: once the site has the video, the job is done and the next
+video starts, and the log says the site is still processing it. **Cancel** stops Local Encoder
+waiting; the site's own processing continues. Use **Try again** with the same
 site and account to resume. Once the video arrived, this preserves its original format and qualities
 and repeats only unfinished preview/audio uploads and confirmation. If access was refused, connect
 again and check upload/edit permissions. If the destination was deleted, add a new video explicitly.

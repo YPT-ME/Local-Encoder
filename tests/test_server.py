@@ -716,9 +716,8 @@ def test_mp3_transfer_failure_is_retried_without_resending_video(tmp_path: Path)
     assert remote.upload_file.call_args.kwargs["format_ext"] == "mp3"
 
 
-@pytest.mark.parametrize("busy", [True, False])
 def test_cancel_while_waiting_for_completion_keeps_media_and_does_not_fail_video(
-    tmp_path: Path, busy: bool
+    tmp_path: Path,
 ) -> None:
     from local_encoder.avideo_client import AVideoClient
 
@@ -726,14 +725,8 @@ def test_cancel_while_waiting_for_completion_keeps_media_and_does_not_fail_video
     remote = _mock_client()
     with AVideoClient(job.session.server_url) as real:
         remote.notify_done.side_effect = real.notify_done
-        response = MagicMock(status_code=200)
-        response.json.return_value = {"error": True, "code": "completion_in_progress"}
         with (
-            patch.object(
-                real._http,
-                "post",
-                side_effect=[response if busy else httpx.RemoteProtocolError("lost")],
-            ),
+            patch.object(real._http, "post", side_effect=[httpx.RemoteProtocolError("lost")]),
             patch(
                 "local_encoder.avideo_client._sleep", side_effect=lambda _: job.cancel_event.set()
             ),
@@ -742,6 +735,22 @@ def test_cancel_while_waiting_for_completion_keeps_media_and_does_not_fail_video
             _run(job, remote, tmp_path)
     assert job.files_sent
     assert all(path.exists() for path in job.encoded)
+    remote.notify_failed.assert_not_called()
+
+
+def test_site_storage_post_processing_does_not_hold_the_queue(tmp_path: Path) -> None:
+    """The site's storage move runs inside the completion request; the job ends anyway."""
+    from local_encoder.avideo_client import AVideoClient
+
+    job = _job(fmt="hls")
+    remote = _mock_client()
+    with AVideoClient(job.session.server_url) as real:
+        remote.notify_done.side_effect = real.notify_done
+        with patch.object(real._http, "post", side_effect=httpx.ReadTimeout("no answer")):
+            _run(job, remote, tmp_path)
+    assert job.status == "done"
+    assert job.result is not None and job.result["videos_id"] == 9
+    assert any("storage" in line for line in job.logs)
     remote.notify_failed.assert_not_called()
 
 

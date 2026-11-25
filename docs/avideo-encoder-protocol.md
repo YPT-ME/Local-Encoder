@@ -107,19 +107,23 @@ The other fields:
    - Otherwise it sends chunk PUTs (C). It validates every response and, if a chunk fails, resumes with the same `file_id` (backoff 2, 4, 8, 16, 30, 30 s).
    - Then it sends B with `chunkFile`.
    - On 413 or when retries run out, it falls back to a multipart `video` POST.
-7. Notify (E): `fail=0` on success, `fail=1` on failure. Local Encoder requires an explicit
-   `error: false` response before marking the job successful or deleting its local files.
-   - `completion_in_progress` is polled (2, 4, 8, 16, 32 s, then every minute) for up to 4 hours:
-     storage hooks such as CDNStorage move every HLS segment inside this request and can run for
-     hours (4,305 files, about 2 h ETA, for a 6 GB movie on flixhouse.com).
+7. Notify (E): `fail=0` on success, `fail=1` on failure. Local Encoder marks the job successful
+   and deletes its local files on `error: false`, or when the site is post-processing:
+   - The receiver saves the final status and file size within seconds, then runs plugin hooks in
+     the same request before answering. Storage hooks such as CDNStorage copy every HLS segment
+     there, one by one, for hours (4,305 files and 2.5–3 h per movie on flixhouse.com).
+   - No answer within `COMPLETION_RESPONSE_TIMEOUT` (120 s, an httpx read timeout) therefore
+     means the video is finished and the site is post-processing: the job is done and the queue
+     moves on. The request is not repeated, because that would start the hooks a second time.
+   - `completion_in_progress` (another request for this video holds the lock and runs the hooks)
+     is also treated as done, without polling.
    - A dropped connection, a read/write timeout or HTTP 502/503/504 is retried up to 8 times
      (15, 30, 60, 120 s…). Connection/TLS failures keep their original diagnosis immediately.
      HTTP 500 is not automatically retried: the completion marker only protects an operation
      that finished successfully; an interrupted hook may already have sent a notification.
      Even transport/gateway recovery cannot guarantee exactly-once plugin side effects.
-   - The web UI can cancel backoff, busy polling and an in-flight completion request. Cancellation
-     stops local waiting; it does not roll back a storage hook already running on the site.
-     The 4-hour busy deadline includes time spent making requests, rather than just sleep time.
+   - The web UI can cancel backoff and an in-flight completion request. Cancellation stops local
+     waiting; it does not roll back a storage hook already running on the site.
    - `fail=1` is sent only before primary video media receipt is acknowledged. `setAutoStatus()` turns `fail=1` into
      status `x` (encoding error) and reruns the hooks, so it must never follow a complete upload.
      After video media arrived, failed MP3/image transfers keep their files and can be retried

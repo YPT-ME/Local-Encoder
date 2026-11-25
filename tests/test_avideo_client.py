@@ -11,9 +11,9 @@ import httpx
 import pytest
 
 from local_encoder.avideo_client import (
+    COMPLETION_RESPONSE_TIMEOUT,
     MAX_CHUNK_RETRIES,
     MAX_COMPLETION_RECONNECTS,
-    MAX_COMPLETION_WAIT,
     USER_AGENT,
     AVideoAPIError,
     AVideoClient,
@@ -361,41 +361,45 @@ def test_notify_done_requires_confirmation(body: dict[str, Any] | list[Any]) -> 
     assert excinfo.value.code == "completion_failed"
 
 
-def test_notify_done_retries_completion_in_progress() -> None:
+def test_completion_in_progress_means_the_site_finishes_on_its_own() -> None:
+    """Another request holds the site's completion lock and runs the storage hooks."""
     busy = _mock_response({"error": True, "code": "completion_in_progress"})
-    success = _mock_response({"error": False, "video_id": 42})
+    messages: list[str] = []
     with AVideoClient("https://example.com/") as c:
         with (
-            patch.object(c._http, "post", side_effect=[busy, success]) as post,
+            patch.object(c._http, "post", return_value=busy) as post,
             patch("local_encoder.avideo_client._sleep") as sleep,
         ):
-            assert c.notify_done(42, "h") == {"error": False, "video_id": 42}
-    assert post.call_count == 2
-    assert post.call_args_list[0].kwargs["data"] == post.call_args_list[1].kwargs["data"]
-    sleep.assert_called_once()
+            result = c.notify_done(42, "h", on_wait=messages.append)
+    assert result["error"] is False
+    assert post.call_count == 1
+    sleep.assert_not_called()
+    assert messages
 
 
-def test_notify_done_stops_retrying_a_busy_site() -> None:
-    now = [0.0]
-
-    def advance(delay: float) -> None:
-        now[0] += delay
-
+def test_no_completion_answer_means_the_site_is_post_processing() -> None:
+    """flixhouse.com: CDNStorage copied 4,305 segments inside the request for 2-3 hours."""
+    messages: list[str] = []
     with AVideoClient("https://example.com/") as c:
         with (
-            patch.object(
-                c._http,
-                "post",
-                return_value=_mock_response({"error": True, "code": "completion_in_progress"}),
-            ),
-            patch("local_encoder.avideo_client._sleep", side_effect=advance) as sleep,
-            patch("local_encoder.avideo_client.time.monotonic", side_effect=lambda: now[0]),
-            pytest.raises(AVideoAPIError) as excinfo,
+            patch.object(c._http, "post", side_effect=httpx.ReadTimeout("timed out")) as post,
+            patch("local_encoder.avideo_client._sleep") as sleep,
         ):
-            c.notify_done(42, "h")
-    assert excinfo.value.code == "completion_in_progress"
-    # A storage hook can run for hours: the client waits that long before giving up.
-    assert MAX_COMPLETION_WAIT <= sum(call.args[0] for call in sleep.call_args_list)
+            result = c.notify_done(42, "h", on_wait=messages.append)
+    assert result["error"] is False
+    assert post.call_count == 1  # asking again would only start the hooks a second time
+    assert post.call_args.kwargs["timeout"].read == COMPLETION_RESPONSE_TIMEOUT
+    sleep.assert_not_called()
+    assert messages
+
+
+def test_failed_notification_does_not_treat_a_timeout_as_done() -> None:
+    with AVideoClient("https://example.com/") as c:
+        with (
+            patch.object(c._http, "post", side_effect=httpx.ReadTimeout("timed out")),
+            pytest.raises(httpx.ReadTimeout),
+        ):
+            c.notify_done(42, "h", failed=True)
 
 
 @pytest.mark.parametrize("code", ["streamer_access_denied", "destination_unavailable"])
@@ -437,8 +441,7 @@ def test_completion_connection_errors_keep_their_diagnosis(problem: httpx.Connec
     sleep.assert_not_called()
 
 
-@pytest.mark.parametrize("busy", [True, False])
-def test_completion_backoff_can_be_cancelled(busy: bool) -> None:
+def test_completion_backoff_can_be_cancelled() -> None:
     from local_encoder.errors import JobCancelled
 
     cancelled = [False]
@@ -451,36 +454,16 @@ def test_completion_backoff_can_be_cancelled(busy: bool) -> None:
         assert delay <= 1
         cancelled[0] = True
 
-    response = _mock_response({"error": True, "code": "completion_in_progress"})
-    problem = httpx.RemoteProtocolError("dropped")
     with AVideoClient("https://example.com/") as c:
         with (
-            patch.object(c._http, "post", side_effect=[response if busy else problem]) as post,
+            patch.object(
+                c._http, "post", side_effect=[httpx.RemoteProtocolError("dropped")]
+            ) as post,
             patch("local_encoder.avideo_client._sleep", side_effect=cancel),
             pytest.raises(JobCancelled),
         ):
             c.notify_done(42, "secret", check_cancel=check)
     assert post.call_count == 1
-
-
-def test_completion_deadline_counts_request_time() -> None:
-    with AVideoClient("https://example.com/") as c:
-        with (
-            patch.object(
-                c._http,
-                "post",
-                return_value=_mock_response({"error": True, "code": "completion_in_progress"}),
-            ) as post,
-            patch(
-                "local_encoder.avideo_client.time.monotonic",
-                side_effect=[0, MAX_COMPLETION_WAIT + 1],
-            ),
-            patch("local_encoder.avideo_client._sleep") as sleep,
-            pytest.raises(AVideoAPIError),
-        ):
-            c.notify_done(42, "secret")
-    assert post.call_count == 1
-    sleep.assert_not_called()
 
 
 def test_completion_reconnect_never_logs_exception_secrets(
@@ -554,7 +537,6 @@ def test_non_json_completion_never_logs_response_secrets(caplog: pytest.LogCaptu
     "dropped",
     [
         httpx.RemoteProtocolError("Server disconnected without sending a response."),
-        httpx.ReadTimeout("timed out"),
         _mock_response({}, status_code=502),
     ],
 )
