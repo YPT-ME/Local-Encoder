@@ -4,7 +4,7 @@ Automatic observations of GitHub release asset counters, collected about hourly.
 
 | Latest observation (UTC) | All release assets | Program packages only |
 | --- | --- | --- |
-| 2026-11-24T23:06:01.889290Z | 157 | 138 |
+| 2026-11-25T05:29:43.312042Z | 159 | 140 |
 
 ## Program downloads per version and platform
 
@@ -12,7 +12,7 @@ Cumulative totals, including downloads before collection began.
 
 | Version | windows-x64 | macos-arm64 | macos-x64 | linux-x64 | linux-arm64 | Total |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| v2.1.4 | 7 | 1 | 1 | 1 | 1 | 11 |
+| v2.1.4 | 9 | 1 | 1 | 1 | 1 | 13 |
 | v2.1.3 | 2 | 1 | 1 | 1 | 1 | 6 |
 | v2.1.2 | 31 | 5 | 2 | 16 | 4 | 58 |
 | v2.1.1 | 3 | 1 | 1 | 2 | 1 | 8 |
@@ -22,7 +22,7 @@ Cumulative totals, including downloads before collection began.
 | v1.0.1 | 2 | 2 | 2 | 1 | 1 | 8 |
 | v1.0.0 | 3 | 1 | 1 | 1 | 1 | 7 |
 | v0.1.0 | 3 | 1 | 1 | 1 | 1 | 7 |
-| **Total** | 65 | 17 | 13 | 29 | 14 | 138 |
+| **Total** | 67 | 17 | 13 | 29 | 14 | 140 |
 
 ## Program downloads per UTC day
 
@@ -31,6 +31,7 @@ Increases between collections, assigned to the day of the later collection.
 | Day (UTC) | Downloads | Version and platform |
 | --- | ---: | --- |
 | Before 2026-10-16 18:51 (time unknown) | 14 | v0.1.0 windows-x64: 2, v1.0.0 windows-x64: 2, v1.0.1 macos-x64: 1, v1.0.1 windows-x64: 1, v1.0.1 macos-arm64: 1, v1.0.2 windows-x64: 1, v2.0.0 windows-x64: 4, v2.1.0 windows-x64: 2 |
+| 2026-11-25 | 2 | v2.1.4 windows-x64: 2 |
 | 2026-11-24 | 58 | v2.1.2 macos-arm64: 2, v0.1.0 linux-x64: 1, v0.1.0 linux-arm64: 1, v0.1.0 macos-x64: 1, v0.1.0 windows-x64: 1, v0.1.0 macos-arm64: 1, v1.0.0 linux-arm64: 1, v1.0.0 macos-x64: 1, v1.0.0 windows-x64: 1, v1.0.0 linux-x64: 1, v1.0.0 macos-arm64: 1, v1.0.1 macos-x64: 1, v1.0.1 linux-arm64: 1, v1.0.1 windows-x64: 1, v1.0.1 linux-x64: 1, v1.0.1 macos-arm64: 1, v1.0.2 linux-arm64: 1, v1.0.2 linux-x64: 1, v1.0.2 windows-x64: 1, v1.0.2 macos-x64: 1, v1.0.2 macos-arm64: 1, v2.0.0 windows-x64: 1, v2.0.0 linux-x64: 1, v2.0.0 macos-arm64: 1, v2.0.0 linux-arm64: 1, v2.0.0 macos-x64: 1, v2.1.0 linux-arm64: 1, v2.1.0 windows-x64: 1, v2.1.0 macos-x64: 1, v2.1.0 macos-arm64: 1, v2.1.0 linux-x64: 1, v2.1.1 linux-x64: 1, v2.1.1 windows-x64: 1, v2.1.1 linux-arm64: 1, v2.1.1 macos-arm64: 1, v2.1.1 macos-x64: 1, v2.1.2 macos-x64: 1, v2.1.2 windows-x64: 1, v2.1.2 linux-arm64: 1, v2.1.2 linux-x64: 1, v2.1.3 macos-x64: 1, v2.1.3 windows-x64: 2, v2.1.3 linux-arm64: 1, v2.1.3 linux-x64: 1, v2.1.3 macos-arm64: 1, v2.1.4 linux-x64: 1, v2.1.4 macos-x64: 1, v2.1.4 windows-x64: 7, v2.1.4 macos-arm64: 1, v2.1.4 linux-arm64: 1 |
 | 2026-11-23 | 5 | v2.1.2 windows-x64: 1, v2.1.2 linux-arm64: 1, v2.1.2 linux-x64: 3 |
 | 2026-11-22 | 1 | v2.1.2 windows-x64: 1 |
@@ -65,6 +66,7 @@ Downloads happened at some moment between the two collection times.
 
 | From (UTC) | To (UTC) | Downloads | Version and platform |
 | --- | --- | ---: | --- |
+| 2026-11-24 23:06 | 2026-11-25 05:29 | 2 | v2.1.4 windows-x64: 2 |
 | 2026-11-24 12:40 | 2026-11-24 23:06 | 57 | v0.1.0 linux-x64: 1, v0.1.0 linux-arm64: 1, v0.1.0 macos-x64: 1, v0.1.0 windows-x64: 1, v0.1.0 macos-arm64: 1, v1.0.0 linux-arm64: 1, v1.0.0 macos-x64: 1, v1.0.0 windows-x64: 1, v1.0.0 linux-x64: 1, v1.0.0 macos-arm64: 1, v1.0.1 macos-x64: 1, v1.0.1 linux-arm64: 1, v1.0.1 windows-x64: 1, v1.0.1 linux-x64: 1, v1.0.1 macos-arm64: 1, v1.0.2 linux-arm64: 1, v1.0.2 linux-x64: 1, v1.0.2 windows-x64: 1, v1.0.2 macos-x64: 1, v1.0.2 macos-arm64: 1, v2.0.0 windows-x64: 1, v2.0.0 linux-x64: 1, v2.0.0 macos-arm64: 1, v2.0.0 linux-arm64: 1, v2.0.0 macos-x64: 1, v2.1.0 linux-arm64: 1, v2.1.0 windows-x64: 1, v2.1.0 macos-x64: 1, v2.1.0 macos-arm64: 1, v2.1.0 linux-x64: 1, v2.1.1 linux-x64: 1, v2.1.1 windows-x64: 1, v2.1.1 linux-arm64: 1, v2.1.1 macos-arm64: 1, v2.1.1 macos-x64: 1, v2.1.2 macos-x64: 1, v2.1.2 macos-arm64: 1, v2.1.2 windows-x64: 1, v2.1.2 linux-arm64: 1, v2.1.2 linux-x64: 1, v2.1.3 macos-x64: 1, v2.1.3 windows-x64: 2, v2.1.3 linux-arm64: 1, v2.1.3 linux-x64: 1, v2.1.3 macos-arm64: 1, v2.1.4 linux-x64: 1, v2.1.4 macos-x64: 1, v2.1.4 windows-x64: 7, v2.1.4 macos-arm64: 1, v2.1.4 linux-arm64: 1 |
 | 2026-11-24 02:20 | 2026-11-24 12:40 | 1 | v2.1.2 macos-arm64: 1 |
 | 2026-11-23 03:47 | 2026-11-23 14:55 | 5 | v2.1.2 windows-x64: 1, v2.1.2 linux-arm64: 1, v2.1.2 linux-x64: 3 |
