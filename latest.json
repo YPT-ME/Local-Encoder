@@ -1,9 +1,9 @@
 {
   "schema_version": 1,
   "repository": "YPT-ME/Local-Encoder",
-  "collected_at": "2026-11-25T17:25:02.154019Z",
-  "total_downloads": 159,
-  "program_downloads": 140,
+  "collected_at": "2026-11-26T01:50:31.008890Z",
+  "total_downloads": 166,
+  "program_downloads": 146,
   "releases": [
     {
       "id": 414043584,
@@ -490,6 +490,55 @@
         },
         {
           "id": 788208030,
+          "name": "ffmpeg-source-9.1.tar.xz",
+          "download_count": 0
+        }
+      ]
+    },
+    {
+      "id": 458534056,
+      "tag_name": "v2.1.5",
+      "published_at": "2026-11-25T19:07:52Z",
+      "prerelease": false,
+      "download_count": 7,
+      "assets": [
+        {
+          "id": 792778563,
+          "name": "LocalEncoder-macos-arm64.zip",
+          "download_count": 1
+        },
+        {
+          "id": 792778564,
+          "name": "LocalEncoder-macos-x64.zip",
+          "download_count": 1
+        },
+        {
+          "id": 792778565,
+          "name": "LocalEncoder-linux-arm64.tar.gz",
+          "download_count": 1
+        },
+        {
+          "id": 792778567,
+          "name": "LocalEncoder-windows-x64.zip",
+          "download_count": 2
+        },
+        {
+          "id": 792778568,
+          "name": "LocalEncoder-linux-x64.tar.gz",
+          "download_count": 1
+        },
+        {
+          "id": 792778872,
+          "name": "SHA256SUMS.txt",
+          "download_count": 1
+        },
+        {
+          "id": 792778895,
+          "name": "ffmpeg-source-4d831360c9.tar.gz",
+          "download_count": 0
+        },
+        {
+          "id": 792778929,
           "name": "ffmpeg-source-9.1.tar.xz",
           "download_count": 0
         }
